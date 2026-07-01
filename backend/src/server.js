@@ -14,6 +14,15 @@ if (fs.existsSync(envFile)) {
   });
 }
 
+// Seed idempotente: crea catálogo/admin solo si faltan (INSERT OR IGNORE).
+// Se ejecuta en cada arranque porque el filesystem de Railway no persiste
+// entre deploys sin un volumen montado — así el catálogo nunca queda vacío.
+try {
+  require('./db/seed')();
+} catch (err) {
+  console.error('Error al ejecutar seed automático:', err.message);
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());

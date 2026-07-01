@@ -193,4 +193,8 @@ function seed() {
   console.log('Si ese sitio cambia URLs, descargar imágenes y alojarlas localmente en public/animalitos/');
 }
 
-seed();
+if (require.main === module) {
+  seed();
+}
+
+module.exports = seed;
