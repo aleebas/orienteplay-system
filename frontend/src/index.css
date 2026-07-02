@@ -348,6 +348,13 @@ small { font-size: 0.8rem; color: var(--text-muted); }
 @media (max-width: 540px) {
   .animalito-grid { grid-template-columns: repeat(5, 1fr); }
 }
+/* Guácharo Activo tiene 77 animalitos -- contener el scroll adentro del
+   grid en vez de empujar el resto de la página hacia abajo. */
+.animalito-grid-wrap-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
 .animalito-card {
   border: 1.5px solid var(--border);
   border-radius: 6px;

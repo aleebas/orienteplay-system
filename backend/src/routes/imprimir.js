@@ -48,7 +48,7 @@ router.post('/', (req, res) => {
         .align('ct')
         .style('b').text('ORIENTE PLAY').style('normal')
         .text((agenciaNombre || 'MI AGENCIA').toUpperCase())
-        .text(`TCK# ${venta.codigo}`)
+        .text(`VENTA# ${venta.codigo}`)
         .text(fechaCorta(venta.creada_en));
       if (venta.cliente_nombre) printer.text(venta.cliente_nombre);
       printer.align('lt').text(SEP2);

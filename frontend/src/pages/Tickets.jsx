@@ -331,6 +331,10 @@ export default function Tickets() {
                   <span className="bold">{ticketDetalle.ticket.codigo}</span>
                 </div>
                 <div className="flex justify-between mb-8">
+                  <span className="text-muted">Venta</span>
+                  <span className="bold">{ticketDetalle.jugada.venta_codigo}</span>
+                </div>
+                <div className="flex justify-between mb-8">
                   <span className="text-muted">Lotería</span>
                   <span>{ticketDetalle.jugada.loteria_nombre}</span>
                 </div>

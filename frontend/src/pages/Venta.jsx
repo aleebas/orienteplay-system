@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV } from '../api/cliente';
+import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV, getTicket, pagarPremio } from '../api/cliente';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
-import { hora12, fmt } from '../utils/formato';
+import { hora12, fmt, horaVenezuela } from '../utils/formato';
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
@@ -40,11 +40,10 @@ export default function Venta() {
   const [sorteo, setSorteo] = useState(null);
   const [modo, setModo] = useState(null);
 
-  // Selección múltiple de horarios: marcar varios sorteos de la misma
-  // lotería para replicar la misma jugada en todos. Con multiHorario en
-  // false (default) el flujo de un solo horario es exactamente el de
-  // siempre -- esto es puramente aditivo.
-  const [multiHorario, setMultiHorario] = useState(false);
+  // Horarios marcados para replicar la misma jugada en varios sorteos a la
+  // vez. El primer horario que se toca avanza de inmediato al armado de la
+  // jugada (mismo comportamiento y velocidad que elegir un solo horario);
+  // tocar mas horarios despues solo los suma, sin repetir pasos.
   const [horariosSelec, setHorariosSelec] = useState([]);
   // Aplicar la misma jugada armada a otra lotería, sin rehacer la
   // selección de animalito/monto. null = panel cerrado.
@@ -77,6 +76,15 @@ export default function Venta() {
   const [imprimiendo, setImprimiendo] = useState(false);
   const [errorImprimir, setErrorImprimir] = useState('');
 
+  // Modal "Buscar tickets" -- pagar o repetir un ticket sin salir de la
+  // venta en curso.
+  const [modalBuscarTicket, setModalBuscarTicket] = useState(false);
+  const [codigoBuscar, setCodigoBuscar] = useState('');
+  const [ticketBuscado, setTicketBuscado] = useState(null);
+  const [loadingBuscarTicket, setLoadingBuscarTicket] = useState(false);
+  const [errorBuscarTicket, setErrorBuscarTicket] = useState('');
+  const [loadingPagarModal, setLoadingPagarModal] = useState(false);
+
   // ── Carga catálogo ────────────────────────────────────────
   useEffect(() => {
     if (!caja) { navigate('/caja'); return; }
@@ -91,44 +99,55 @@ export default function Venta() {
     getTasaBCV().then(r => setTasaBCV(r.tasa)).catch(() => {});
   }, []);
 
-  // ── Prefill "Repetir jugada" desde Tickets ────────────────
+  // ── Aplicar "Repetir jugada" ───────────────────────────────
   // Precarga lotería/modo/animalito(s)/monto de un ticket viejo y deja
-  // al usuario directo en el selector de horarios (multiHorario) para
-  // que solo elija las próximas horas y confirme.
-  useEffect(() => {
-    const repetir = location.state?.repetir;
-    if (!repetir || repetirAplicadoRef.current || catalogo.length === 0) return;
-    repetirAplicadoRef.current = true;
-
+  // al usuario directo en el selector de horarios para que solo elija
+  // las próximas horas y confirme. Reusada tanto por el prefill que
+  // llega desde Tickets.jsx (navigate con location.state) como por el
+  // botón "Repetir jugada" del modal "Buscar tickets" (sin navegar,
+  // ya estamos en /venta). Devuelve true/false segun si pudo aplicarse.
+  function aplicarRepetir(repetir) {
     const lot = catalogo.find(l => l.id === repetir.loteria_id);
     if (!lot) {
       setError('La lotería de este ticket ya no está disponible');
-      return;
+      return false;
     }
     const modoObj = lot.modos_juego.find(m => m.slug === repetir.modo_slug);
     if (!modoObj) {
       setError(`${lot.nombre} ya no tiene el modo de juego de esta jugada`);
-      return;
+      return false;
     }
     const resueltos = repetir.animalitos
       .map(x => lot.animalitos.find(a => a.numero === x.numero))
       .filter(Boolean);
     if (resueltos.length !== repetir.animalitos.length) {
       setError('No se pudieron reconocer todos los animalitos de ese ticket');
-      return;
+      return false;
     }
 
     setLoteria(lot);
+    setSorteo(null);
+    setHorariosSelec([]);
     setModo(modoObj);
     setModoSkipped(modoObj.slug === 'directo');
     if (modoObj.slug === 'directo') {
       setSelecMulti(Object.fromEntries(resueltos.map(a => [a.id, { animalito: a, monto: String(repetir.monto) }])));
+      setAnimTripleta([]); setMontoTripleta('');
     } else {
       setAnimTripleta(resueltos);
       setMontoTripleta(String(repetir.monto));
+      setSelecMulti({});
     }
-    setMultiHorario(true);
     setStep(1);
+    return true;
+  }
+
+  // ── Prefill "Repetir jugada" desde Tickets ────────────────
+  useEffect(() => {
+    const repetir = location.state?.repetir;
+    if (!repetir || repetirAplicadoRef.current || catalogo.length === 0) return;
+    repetirAplicadoRef.current = true;
+    aplicarRepetir(repetir);
     navigate(location.pathname, { replace: true, state: null });
   }, [catalogo, location.pathname, location.state, navigate]);
 
@@ -147,7 +166,7 @@ export default function Venta() {
   function resetParaNuevaLoteria() {
     setStep(0); setModoSkipped(false);
     setLoteria(null); setSorteo(null); setModo(null);
-    setMultiHorario(false); setHorariosSelec([]);
+    setHorariosSelec([]);
     resetJugada();
   }
 
@@ -155,7 +174,7 @@ export default function Venta() {
     setVentaConfirmada(null);
     setStep(0); setModoSkipped(false);
     setLoteria(null); setSorteo(null); setModo(null);
-    setMultiHorario(false); setHorariosSelec([]); setRepetirOtraLoteria(null);
+    setHorariosSelec([]); setRepetirOtraLoteria(null);
     setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
     setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
   }, []);
@@ -196,38 +215,23 @@ export default function Venta() {
     }
   }
 
-  function selecSorteo(s) {
-    avanzarDesdeSorteo(s);
-  }
-
-  // ── Selección múltiple de horarios (feature: repetir jugada) ──
-  function toggleMultiHorario() {
-    setMultiHorario(prev => !prev);
-    setHorariosSelec([]);
-  }
-
-  function toggleHorarioMulti(s) {
+  // ── Toggle único de horarios ───────────────────────────────
+  // El primer horario de una entrada nueva a este paso (modo todavia sin
+  // elegir) avanza de inmediato -- mismo camino y velocidad que hoy, 1
+  // click. Si ya hay un modo elegido (venimos de "agregar horario" desde
+  // el paso 3, o de "Repetir jugada" con todo precargado), los clicks
+  // solo suman/quitan del arreglo sin navegar -- el operador vuelve al
+  // paso 3 con el botón "Continuar a la jugada" que aparece mas abajo.
+  function toggleHorario(s) {
+    const eraPrimero = horariosSelec.length === 0;
     setHorariosSelec(prev => {
       const idx = prev.findIndex(h => h.id === s.id);
       if (idx !== -1) return prev.filter((_, i) => i !== idx);
       return [...prev, s];
     });
-  }
-
-  function continuarConHorarios() {
-    if (horariosSelec.length === 0) return;
-    const representativo = horariosSelec[0];
-    // Si ya hay una jugada armada de antes (viene de "Repetir jugada"
-    // desde Tickets: modo + animalito(s) + monto ya precargados), no
-    // pisarla con el reset/auto-deteccion de modo de avanzarDesdeSorteo
-    // -- solo fijar el sorteo y saltar directo al paso de la jugada.
-    const hayJugadaArmada = modo && (Object.keys(selecMulti).length > 0 || animTripleta.length > 0);
-    if (hayJugadaArmada) {
-      setSorteo(representativo);
-      setStep(3);
-      return;
+    if (eraPrimero && !modo) {
+      avanzarDesdeSorteo(s);
     }
-    avanzarDesdeSorteo(representativo);
   }
 
   function selecModo(m) {
@@ -257,6 +261,23 @@ export default function Venta() {
       setErrorNumero(`"${val}" no encontrado`);
       return;
     }
+
+    if (esTripleta) {
+      if (animTripleta.some(a => a.id === anim.id)) {
+        setErrorNumero('Ya agregado');
+        return;
+      }
+      if (animTripleta.length >= 3) {
+        setErrorNumero('Ya tenés 3 animalitos');
+        return;
+      }
+      setInputNumero('');
+      setErrorNumero('');
+      toggleAnimTripleta(anim);
+      setTimeout(() => inputNumeroRef.current?.focus(), 50);
+      return;
+    }
+
     setInputNumero('');
     if (selecMulti[anim.id]) {
       setErrorNumero('Ya agregado');
@@ -417,6 +438,64 @@ export default function Venta() {
     });
   }
 
+  // ── Modal "Buscar tickets" ─────────────────────────────────
+  // Pagar o repetir un ticket sin salir de la venta en curso. Reusa los
+  // mismos endpoints que Pagos.jsx (getTicket/pagarPremio) y la misma
+  // aplicarRepetir del prefill que llega desde Tickets.jsx.
+  function abrirModalBuscarTicket() {
+    setCodigoBuscar(''); setTicketBuscado(null); setErrorBuscarTicket('');
+    setModalBuscarTicket(true);
+  }
+
+  function cerrarModalBuscarTicket() {
+    setModalBuscarTicket(false);
+  }
+
+  async function handleBuscarTicketModal() {
+    const cod = codigoBuscar.trim().toUpperCase();
+    if (!cod) return;
+    setErrorBuscarTicket('');
+    setLoadingBuscarTicket(true);
+    try {
+      setTicketBuscado(await getTicket(cod));
+    } catch (err) {
+      setTicketBuscado(null);
+      setErrorBuscarTicket(err.status === 404 ? 'Ticket no encontrado' : err.message);
+    } finally {
+      setLoadingBuscarTicket(false);
+    }
+  }
+
+  async function handlePagarTicketModal() {
+    if (!ticketBuscado || !caja?.id) return;
+    setErrorBuscarTicket('');
+    setLoadingPagarModal(true);
+    try {
+      await pagarPremio(ticketBuscado.ticket.codigo, caja.id);
+      setTicketBuscado(await getTicket(ticketBuscado.ticket.codigo));
+    } catch (err) {
+      setErrorBuscarTicket(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : err.message);
+    } finally {
+      setLoadingPagarModal(false);
+    }
+  }
+
+  function handleRepetirDesdeModal() {
+    if (!ticketBuscado) return;
+    if (hayJugadaArmada) {
+      const seguro = confirm('Esto va a reemplazar la jugada que estás armando ahora (no lo que ya agregaste al carrito). ¿Continuar?');
+      if (!seguro) return;
+    }
+    const { jugada, animalitos } = ticketBuscado;
+    const ok = aplicarRepetir({
+      loteria_id: animalitos[0].loteria_id,
+      modo_slug: jugada.modo_slug,
+      monto: jugada.monto,
+      animalitos: animalitos.map(a => ({ numero: a.numero, nombre: a.nombre })),
+    });
+    if (ok) cerrarModalBuscarTicket();
+  }
+
   async function confirmarVenta(forzar = false) {
     if (carrito.length === 0) return;
     setError(''); setLoadingConfirmar(true); setConfirmDialog(null);
@@ -491,9 +570,11 @@ export default function Venta() {
 
   const esDirecto = modo?.slug === 'directo';
   const esTripleta = modo && !esDirecto;
+  const esGuacharo = loteria?.slug === 'guacharoactivo';
+  const hayJugadaArmada = !!modo && (Object.keys(selecMulti).length > 0 || animTripleta.length > 0);
   const totalSelecMulti = Object.values(selecMulti).reduce((s, x) => s + (parseFloat(x.monto) || 0), 0);
   const totalCarrito = carrito.reduce((s, i) => s + i.monto, 0);
-  const sorteosActivos = multiHorario ? horariosSelec : (sorteo ? [sorteo] : []);
+  const sorteosActivos = horariosSelec.length ? horariosSelec : (sorteo ? [sorteo] : []);
   const stepperActivo = step === 0 ? 0 : step === 1 ? 1 : 2;
   const STEPPER = ['Lotería', 'Sorteo', 'Jugada'];
 
@@ -511,6 +592,115 @@ export default function Venta() {
               <button className="btn btn-outline" onClick={() => setConfirmDialog(null)}>Revisar</button>
               <button className="btn btn-warning" onClick={() => confirmarVenta(true)}>Confirmar igual</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {modalBuscarTicket && (
+        <div className="dialog-overlay" onClick={cerrarModalBuscarTicket}>
+          <div className="dialog" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between align-center mb-12">
+              <h2>🔍 Buscar tickets</h2>
+              <button className="btn btn-sm btn-inline btn-outline" onClick={cerrarModalBuscarTicket}>✕</button>
+            </div>
+
+            <div className="flex gap-8 mb-12">
+              <input
+                type="text"
+                value={codigoBuscar}
+                onChange={e => setCodigoBuscar(e.target.value.toUpperCase())}
+                placeholder="Ej: MS-ABC1XY23"
+                style={{ flex: 1, padding: '11px 14px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '1rem', minHeight: 48 }}
+                onKeyDown={e => e.key === 'Enter' && handleBuscarTicketModal()}
+                autoFocus
+              />
+              <button
+                className="btn btn-primary btn-inline"
+                onClick={handleBuscarTicketModal}
+                disabled={loadingBuscarTicket || !codigoBuscar}
+                style={{ minWidth: 90 }}
+              >
+                {loadingBuscarTicket ? '...' : 'Buscar'}
+              </button>
+            </div>
+
+            {errorBuscarTicket && <div className="alert alert-danger">{errorBuscarTicket}</div>}
+
+            {ticketBuscado && (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <span className={`badge badge-${
+                    ticketBuscado.ticket.estado === 'ganador' ? 'success' :
+                    ticketBuscado.ticket.estado === 'pagado' ? 'muted' :
+                    ticketBuscado.ticket.estado === 'perdedor' ? 'danger' :
+                    ticketBuscado.ticket.estado === 'anulado' ? 'warning' : 'info'
+                  }`} style={{ fontSize: '0.9rem', padding: '4px 12px' }}>
+                    {ticketBuscado.ticket.estado.toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex justify-between mb-8">
+                  <span className="text-muted">Ticket</span>
+                  <span className="bold">{ticketBuscado.ticket.codigo}</span>
+                </div>
+                <div className="flex justify-between mb-8">
+                  <span className="text-muted">Venta</span>
+                  <span className="bold">{ticketBuscado.jugada.venta_codigo}</span>
+                </div>
+                <div className="flex justify-between mb-8">
+                  <span className="text-muted">Lotería</span>
+                  <span>{ticketBuscado.jugada.loteria_nombre}</span>
+                </div>
+                <div className="flex justify-between mb-8">
+                  <span className="text-muted">Sorteo</span>
+                  <span>{hora12(ticketBuscado.jugada.sorteo_hora)} · {ticketBuscado.jugada.fecha_sorteo}</span>
+                </div>
+                <div className="flex justify-between mb-8">
+                  <span className="text-muted">Animal(es)</span>
+                  <span>{ticketBuscado.animalitos.map(a => `${EMOJI_MAP[a.nombre] || '🐾'} ${a.nombre}`).join(' + ')}</span>
+                </div>
+                <div className="flex justify-between mb-8">
+                  <span className="text-muted">Monto apostado</span>
+                  <span className="bold">{fmt(ticketBuscado.jugada.monto)}</span>
+                </div>
+
+                {ticketBuscado.ticket.estado === 'ganador' && (
+                  <>
+                    <div style={{ background: 'var(--success-light)', borderRadius: 'var(--radius)', padding: '12px 16px', margin: '12px 0', textAlign: 'center' }}>
+                      <div className="text-success bold" style={{ fontSize: '1.1rem' }}>🏆 Premio a pagar</div>
+                      <div className="text-success bold" style={{ fontSize: '1.6rem' }}>
+                        {fmt(ticketBuscado.jugada.monto * ticketBuscado.jugada.multiplicador)}
+                      </div>
+                    </div>
+                    {!caja && (
+                      <div className="alert alert-warning">No hay caja abierta. Abre una caja para pagar premios.</div>
+                    )}
+                    <button
+                      className="btn btn-success"
+                      style={{ width: '100%', marginBottom: 8 }}
+                      onClick={handlePagarTicketModal}
+                      disabled={loadingPagarModal || !caja}
+                    >
+                      {loadingPagarModal ? 'Procesando...' : '💰 Pagar ticket'}
+                    </button>
+                  </>
+                )}
+
+                {ticketBuscado.ticket.estado === 'pagado' && ticketBuscado.pago && (
+                  <div className="alert alert-info">
+                    Pagado el {horaVenezuela(ticketBuscado.pago.pagado_en)}<br />
+                    Monto: {fmt(ticketBuscado.pago.monto_pagado)}
+                  </div>
+                )}
+
+                <button
+                  className="btn btn-outline"
+                  style={{ width: '100%' }}
+                  onClick={handleRepetirDesdeModal}
+                >
+                  🔁 Repetir jugada
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -571,11 +761,24 @@ export default function Venta() {
               <div
                 className="flex align-center gap-8 mb-12"
                 style={{ fontSize: '0.85rem', cursor: 'pointer', color: 'var(--primary)', flexWrap: 'wrap' }}
-                onClick={() => { setStep(0); resetJugada(); setSorteo(null); setModo(null); setMultiHorario(false); setHorariosSelec([]); }}
+                onClick={() => { setStep(0); resetJugada(); setSorteo(null); setModo(null); setHorariosSelec([]); }}
               >
                 <span>🎰 <strong>{loteria.nombre}</strong></span>
                 {sorteo && (
-                  <><span className="text-muted">·</span><span>⏰ {sorteosActivos.length > 1 ? `${sorteosActivos.length} horarios` : hora12(sorteo.hora)}</span></>
+                  <>
+                    <span className="text-muted">·</span>
+                    <span>
+                      ⏰ {sorteosActivos.length > 1 ? `${sorteosActivos.length} horarios` : hora12(sorteo.hora)}
+                      {step >= 3 && (
+                        <span
+                          className="cambiar-modo-link"
+                          onClick={e => { e.stopPropagation(); setStep(1); }}
+                        >
+                          agregar horario
+                        </span>
+                      )}
+                    </span>
+                  </>
                 )}
                 {modo && (
                   <><span className="text-muted">·</span><span>🎲 {modo.nombre}</span>
@@ -597,22 +800,17 @@ export default function Venta() {
             {step === 1 && (
               <>
                 <h3>Selecciona el Sorteo</h3>
-                <label className="flex align-center gap-8 mb-12" style={{ fontSize: '0.85rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={multiHorario} onChange={toggleMultiHorario} />
-                  🕐 Elegir varios horarios
-                </label>
+                <p className="text-muted text-sm mb-8">Tocá un horario para jugarlo. Podés tocar más de uno.</p>
                 <div className="sorteo-grid">
                   {loteria.sorteos.map(s => {
                     const abierto = sorteoAbierto(s);
-                    const seleccionado = multiHorario
-                      ? horariosSelec.some(h => h.id === s.id)
-                      : sorteo?.id === s.id;
+                    const seleccionado = horariosSelec.some(h => h.id === s.id);
                     return (
                       <button
                         key={s.id}
                         className={`sorteo-btn${seleccionado ? ' selected' : ''}`}
                         disabled={!abierto}
-                        onClick={() => multiHorario ? toggleHorarioMulti(s) : selecSorteo(s)}
+                        onClick={() => toggleHorario(s)}
                       >
                         {hora12(s.hora)}
                         {!abierto && <span className="sorteo-cerrado">Cerrado</span>}
@@ -620,13 +818,12 @@ export default function Venta() {
                     );
                   })}
                 </div>
-                {multiHorario && (
+                {modo && horariosSelec.length > 0 && (
                   <button
                     className="btn btn-primary mt-8"
-                    disabled={horariosSelec.length === 0}
-                    onClick={continuarConHorarios}
+                    onClick={() => setStep(3)}
                   >
-                    Continuar con {horariosSelec.length} horario{horariosSelec.length !== 1 ? 's' : ''} →
+                    Continuar a la jugada ({horariosSelec.length} horario{horariosSelec.length !== 1 ? 's' : ''}) →
                   </button>
                 )}
               </>
@@ -670,14 +867,16 @@ export default function Venta() {
                         />
                         {errorNumero && <span className="numero-error">{errorNumero}</span>}
                       </div>
-                      <SelectorAnimalito
-                        animalitos={loteria.animalitos}
-                        seleccionados={Object.values(selecMulti).map(x => x.animalito)}
-                        cantidad={1}
-                        onSelect={toggleAnimMulti}
-                        limitarSeleccion={false}
-                        loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
-                      />
+                      <div className={esGuacharo ? 'animalito-grid-wrap-scroll' : undefined}>
+                        <SelectorAnimalito
+                          animalitos={loteria.animalitos}
+                          seleccionados={Object.values(selecMulti).map(x => x.animalito)}
+                          cantidad={1}
+                          onSelect={toggleAnimMulti}
+                          limitarSeleccion={false}
+                          loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
+                        />
+                      </div>
                     </div>
 
                     <div className="jugada-seleccion">
@@ -738,14 +937,28 @@ export default function Venta() {
                     <h3 style={{ marginBottom: 8 }}>
                       Selecciona 3 animalitos ({animTripleta.length}/3)
                     </h3>
-                    <SelectorAnimalito
-                      animalitos={loteria.animalitos}
-                      seleccionados={animTripleta}
-                      cantidad={3}
-                      onSelect={toggleAnimTripleta}
-                      limitarSeleccion={true}
-                      loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
-                    />
+                    <div className="numero-rapido-wrap">
+                      <input
+                        ref={inputNumeroRef}
+                        className="numero-rapido"
+                        type="text"
+                        value={inputNumero}
+                        onChange={e => { setInputNumero(e.target.value); setErrorNumero(''); }}
+                        onKeyDown={handleInputNumero}
+                        placeholder="Buscar por N° (ej: 06, 12) y presiona Enter"
+                      />
+                      {errorNumero && <span className="numero-error">{errorNumero}</span>}
+                    </div>
+                    <div className={esGuacharo ? 'animalito-grid-wrap-scroll' : undefined}>
+                      <SelectorAnimalito
+                        animalitos={loteria.animalitos}
+                        seleccionados={animTripleta}
+                        cantidad={3}
+                        onSelect={toggleAnimTripleta}
+                        limitarSeleccion={true}
+                        loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
+                      />
+                    </div>
                     {animTripleta.length === 3 && (
                       <div className="field mt-8">
                         <label>Monto a apostar (Tripleta paga x{modo.multiplicador})</label>
@@ -772,6 +985,13 @@ export default function Venta() {
                     </button>
                   </>
                 )}
+
+                <button
+                  className="btn btn-outline btn-sm mt-12"
+                  onClick={abrirModalBuscarTicket}
+                >
+                  🔍 Buscar tickets
+                </button>
 
                 {/* ─ Repetir esta misma jugada en otra lotería ─ */}
                 {((esDirecto && Object.keys(selecMulti).length > 0) || (esTripleta && animTripleta.length === 3 && montoTripleta)) && (
@@ -893,15 +1113,6 @@ export default function Venta() {
               )}
 
               <div className="field">
-                <label>Cliente {metodoPago === 'credito' ? '(requerido para crédito)' : '(opcional)'}</label>
-                <input type="text" value={clienteNombre} onChange={e => setClienteNombre(e.target.value)} placeholder="Nombre" style={{ minHeight: 40 }} />
-              </div>
-              <div className="field">
-                <label>Teléfono {metodoPago === 'credito' ? '(requerido para crédito)' : 'WhatsApp (opcional)'}</label>
-                <input type="tel" value={clienteTelefono} onChange={e => setClienteTelefono(e.target.value)} placeholder="04121234567" style={{ minHeight: 40 }} />
-              </div>
-
-              <div className="field">
                 <label>Forma de pago</label>
                 <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
                   <option value="efectivo">Efectivo</option>
@@ -910,6 +1121,19 @@ export default function Venta() {
                   <option value="credito">A crédito</option>
                 </select>
               </div>
+
+              {metodoPago === 'credito' && (
+                <>
+                  <div className="field">
+                    <label>Cliente (requerido)</label>
+                    <input type="text" value={clienteNombre} onChange={e => setClienteNombre(e.target.value)} placeholder="Nombre" style={{ minHeight: 40 }} />
+                  </div>
+                  <div className="field">
+                    <label>Teléfono (requerido)</label>
+                    <input type="tel" value={clienteTelefono} onChange={e => setClienteTelefono(e.target.value)} placeholder="04121234567" style={{ minHeight: 40 }} />
+                  </div>
+                </>
+              )}
 
               {metodoPago === 'credito' && (
                 <div className="alert alert-warning">

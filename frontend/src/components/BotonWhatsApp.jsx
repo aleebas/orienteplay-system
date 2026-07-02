@@ -12,7 +12,7 @@ function buildTextoComprobante(ventaData, agenciaNombre) {
   const bloques = agruparJugadasParaTicket(jugadas);
 
   let txt = `🎰 *${nombre}*\n`;
-  txt += `TCK# ${venta.codigo}  ${fechaCorta(venta.creada_en)}\n`;
+  txt += `VENTA# ${venta.codigo}  ${fechaCorta(venta.creada_en)}\n`;
   if (venta.cliente_nombre) txt += `${venta.cliente_nombre}\n`;
   txt += `─────────────────────\n`;
 
