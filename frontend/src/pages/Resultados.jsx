@@ -30,6 +30,9 @@ export default function Resultados() {
   const [candidatos, setCandidatos] = useState([]);
   const [procesandoCandidato, setProcesandoCandidato] = useState(null);
 
+  const [numeroInput, setNumeroInput] = useState('');
+  const [errorNumero, setErrorNumero] = useState('');
+
   async function cargar() {
     setLoading(true);
     try {
@@ -80,21 +83,42 @@ export default function Resultados() {
     }
   }
 
-  async function handleCargar() {
-    if (!sorteoSelec || !animalito) return;
+  async function handleCargarConAnimalito(a) {
+    if (!sorteoSelec || !a) return;
     setError('');
     setCargandoResultado(sorteoSelec.id);
     try {
-      await cargarResultado(sorteoSelec.id, animalito.id, fecha);
-      setExito(`Resultado cargado: ${sorteoSelec.hora} → ${EMOJI_MAP[animalito.nombre] || '🐾'} ${animalito.nombre}`);
+      await cargarResultado(sorteoSelec.id, a.id, fecha);
+      setExito(`Resultado cargado: ${sorteoSelec.hora} → ${EMOJI_MAP[a.nombre] || '🐾'} ${a.nombre}`);
       setSorteoSelec(null);
       setAnimalito(null);
+      setNumeroInput('');
+      setErrorNumero('');
       await cargar();
     } catch (err) {
       setError(err.message);
     } finally {
       setCargandoResultado(null);
     }
+  }
+
+  function handleCargar() {
+    return handleCargarConAnimalito(animalito);
+  }
+
+  function handleNumeroKeyDown(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const numero = numeroInput.trim();
+    if (!numero) return;
+    const encontrado = (sorteoSelec?.loteria?.animalitos || []).find(a => a.numero === numero);
+    if (!encontrado) {
+      setErrorNumero(`No se encontró ningún animalito con el número ${numero} en esta lotería`);
+      return;
+    }
+    setErrorNumero('');
+    setAnimalito(encontrado);
+    handleCargarConAnimalito(encontrado);
   }
 
   if (loading) return <div className="loading"><div className="spinner"></div><br />Cargando...</div>;
@@ -173,6 +197,19 @@ export default function Resultados() {
             <p className="text-muted text-sm mb-12">
               {sorteoSelec.loteria?.nombre || ''} — Sorteo {hora12(sorteoSelec.hora)}
             </p>
+            <div className="field" style={{ marginBottom: 12 }}>
+              <label>Buscar por número</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={numeroInput}
+                onChange={e => { setNumeroInput(e.target.value); setErrorNumero(''); }}
+                onKeyDown={handleNumeroKeyDown}
+                placeholder="Escribe el número (ej: 23)"
+                autoFocus
+              />
+              {errorNumero && <p className="text-danger text-sm" style={{ marginTop: 4 }}>{errorNumero}</p>}
+            </div>
             <h3 style={{ marginBottom: 8 }}>¿Qué animalito salió?</h3>
             <SelectorAnimalito
               animalitos={sorteoSelec.loteria?.animalitos || []}
@@ -182,7 +219,7 @@ export default function Resultados() {
               loteriaSlug={LOTERIA_SLUG_IMAGEN[sorteoSelec.loteria?.slug]}
             />
             <div className="dialog-actions">
-              <button className="btn btn-outline" onClick={() => { setSorteoSelec(null); setAnimalito(null); }}>
+              <button className="btn btn-outline" onClick={() => { setSorteoSelec(null); setAnimalito(null); setNumeroInput(''); setErrorNumero(''); }}>
                 Cancelar
               </button>
               <button
@@ -223,7 +260,7 @@ export default function Resultados() {
                     {!res && (
                       <button
                         className="btn btn-primary btn-sm btn-inline"
-                        onClick={() => { setSorteoSelec({ ...s, loteria: lot }); setAnimalito(null); }}
+                        onClick={() => { setSorteoSelec({ ...s, loteria: lot }); setAnimalito(null); setNumeroInput(''); setErrorNumero(''); }}
                       >
                         Cargar
                       </button>

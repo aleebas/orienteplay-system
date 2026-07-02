@@ -51,7 +51,7 @@ export default function Tickets() {
   const [loadingDetalle, setLoadingDetalle] = useState(false);
   const [errorDetalle, setErrorDetalle] = useState('');
 
-  const [anulandoId, setAnulandoId] = useState(null);
+  const [anulandoVenta, setAnulandoVenta] = useState(null);
   const [errorAnular, setErrorAnular] = useState('');
 
   const [creditos, setCreditos] = useState([]);
@@ -115,16 +115,22 @@ export default function Tickets() {
   }, [lista, estadoFiltro, busqueda]);
 
   async function handleAnular(t) {
-    if (!confirm(`¿Anular el ticket ${t.ticket_codigo}?`)) return;
+    const relacionados = lista.filter(x => x.venta_codigo === t.venta_codigo);
+    const mensaje = relacionados.length > 1
+      ? `Esta venta tiene ${relacionados.length} tickets. Se anularán TODOS:\n\n` +
+        relacionados.map(x => `• ${x.ticket_codigo} — ${x.animalitos} (${fmt(x.monto)})`).join('\n') +
+        `\n\n¿Confirmar la anulación de toda la venta?`
+      : `¿Anular el ticket ${t.ticket_codigo}?`;
+    if (!confirm(mensaje)) return;
     setErrorAnular('');
-    setAnulandoId(t.ticket_id);
+    setAnulandoVenta(t.venta_codigo);
     try {
       await anularVenta(t.venta_codigo);
       cargarTickets();
     } catch (err) {
       setErrorAnular(err.message || 'No se pudo anular el ticket');
     } finally {
-      setAnulandoId(null);
+      setAnulandoVenta(null);
     }
   }
 
@@ -270,10 +276,10 @@ export default function Tickets() {
                       {puedeAnular(t) && (
                         <button
                           className="btn btn-danger btn-sm btn-inline"
-                          disabled={anulandoId === t.ticket_id}
+                          disabled={anulandoVenta === t.venta_codigo}
                           onClick={e => { e.stopPropagation(); handleAnular(t); }}
                         >
-                          {anulandoId === t.ticket_id ? '...' : 'Anular'}
+                          {anulandoVenta === t.venta_codigo ? '...' : 'Anular'}
                         </button>
                       )}
                     </td>
