@@ -23,14 +23,16 @@ try {
   console.error('Error al ejecutar seed automático:', err.message);
 }
 
-const ALLOWED_ORIGINS = [
-  'https://orienteplay.com',
-  'https://www.orienteplay.com',
-  'http://localhost:5173',
-];
-
 const app = express();
-app.use(cors({ origin: ALLOWED_ORIGINS }));
+app.use(cors({
+  origin: [
+    'https://orienteplay.com',
+    'https://www.orienteplay.com',
+    'https://orienteplay-system.vercel.app',
+    'http://localhost:5173',
+  ],
+  credentials: true,
+}));
 app.use(express.json());
 
 // Imágenes de animalitos descargadas localmente
