@@ -10,20 +10,32 @@
 // (12 minutos) no encuentra nada, marca 'agotado' para que quede
 // claro que hace falta cargar el resultado a mano.
 //
-// AVISO: lotoven.com renderiza los resultados con JavaScript del
-// lado del cliente, asi que el parseo de abajo es "mejor esfuerzo"
-// sobre el HTML estatico -- no fue posible verificar el marcado
-// real contra el sitio en vivo. Si nunca encuentra nada, el
-// sistema de todas formas cae correctamente en 'agotado' y avisa
-// para carga manual, que es un flujo que si funciona siempre.
+// lotoven.com/animalitos/ renderiza TODAS las loterias del dia en
+// una sola pagina de HTML estatico (sin API/XHR). Cada loteria es
+// un bloque <div id="{slug}"> con tarjetas por sorteo que traen el
+// nombre del animalito y la hora ("<span class="info ...">23
+// Cebra</span> ... <span class="info2 horario">08:00 AM</span>").
+// Los slugs de seccion (lottoactivo, lagranjita, ruletaactiva,
+// selvaplus, guacharoactivo) y los nombres de animalitos coinciden
+// exactamente con los de la base de datos.
 // ============================================================
 
+const https = require('https');
 const db = require('./../db/connection');
 
 const RETRASO_INICIAL_MIN = 3;
 const INTERVALO_REINTENTO_MIN = 3;
 const MAX_INTENTOS = 4;
 const REVISAR_SORTEOS_NUEVOS_MS = 60 * 60 * 1000; // cada hora
+
+const RESULTADOS_URL = 'https://lotoven.com/animalitos/';
+const CHROME_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// Captura "<numero> <Nombre></span> ... <hora AM/PM></span>" de cada
+// tarjeta de resultado dentro del bloque de una loteria.
+const RESULTADO_REGEX =
+  /<span class="info (?:rojo|negro)">\s*\d+\s+([^<]+?)\s*<\/span>\s*<span class="info2 horario"[^>]*>\s*(\d{1,2}:\d{2}\s*[AP]M)\s*<\/span>/g;
 
 const timers = new Map(); // `${sorteoId}|${fecha}` -> timeout handle
 
@@ -35,34 +47,79 @@ function normalizarHora12(hora24) {
   const [h, m] = hora24.split(':').map(Number);
   const period = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 || 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+function descargarPaginaAnimalitos() {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      RESULTADOS_URL,
+      {
+        headers: {
+          'User-Agent': CHROME_USER_AGENT,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-VE,es;q=0.9',
+        },
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => resolve(data));
+      }
+    );
+    req.setTimeout(10000, () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+// El HTML trae las loterias una tras otra dentro de <section id="ani-res">,
+// cada una precedida por <h3 class="text-center pb-3">Resultados ...</h3>.
+// Se recorta desde el <div id="{slug}"> de la loteria buscada hasta el
+// siguiente <h3> (o el cierre de la seccion si es la ultima).
+function extraerSeccionLoteria(html, loteriaSlug) {
+  const inicio = html.indexOf(`id="${loteriaSlug}"`);
+  if (inicio === -1) return null;
+
+  const finHeader = html.indexOf('<h3 class="text-center pb-3">', inicio);
+  const finSeccion = html.indexOf('</section>', inicio);
+  const fin = finHeader !== -1 ? finHeader : finSeccion !== -1 ? finSeccion : html.length;
+
+  return html.slice(inicio, fin);
+}
+
+function parsearResultados(seccionHtml) {
+  const resultados = [];
+  RESULTADO_REGEX.lastIndex = 0;
+  let m;
+  while ((m = RESULTADO_REGEX.exec(seccionHtml)) !== null) {
+    resultados.push({ nombre: m[1].trim().toUpperCase(), hora: m[2].replace(/\s+/g, ' ').trim() });
+  }
+  return resultados;
 }
 
 async function buscarResultadoLotoven(loteriaSlug, hora) {
-  const url = `https://lotoven.com/animalito/${loteriaSlug}/resultados/`;
   let html;
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return null;
-    html = await res.text();
+    html = await descargarPaginaAnimalitos();
   } catch {
     return null;
   }
 
+  const seccion = extraerSeccionLoteria(html, loteriaSlug);
+  if (!seccion) return null;
+
   const horaBuscada = normalizarHora12(hora);
-  const idx = html.indexOf(horaBuscada);
-  if (idx === -1) return null;
+  const resultados = parsearResultados(seccion);
+  const encontrado = resultados.find((r) => r.hora === horaBuscada);
+  if (!encontrado) return null;
 
-  // Ventana de texto alrededor de la hora encontrada, buscando un numero
-  // de 1-2 digitos (el numero de animalito ganador).
-  const ventana = html.slice(idx, idx + 300).replace(/<[^>]+>/g, ' ');
-  const m = ventana.match(/\b(\d{1,2})\b/);
-  if (!m) return null;
-
-  return { numero: m[1] };
+  return { nombre: encontrado.nombre };
 }
 
 function guardarCandidato(sorteoId, fecha, animalitoId, estado, intentos) {
@@ -91,11 +148,11 @@ async function ejecutarChequeo(sorteo, fecha, intento) {
 
   if (encontrado) {
     const animalito = db.prepare(
-      `SELECT id FROM animalitos WHERE loteria_id = (SELECT loteria_id FROM sorteos WHERE id = ?) AND numero = ?`
-    ).get(sorteo.id, encontrado.numero);
+      `SELECT id FROM animalitos WHERE loteria_id = (SELECT loteria_id FROM sorteos WHERE id = ?) AND nombre = ?`
+    ).get(sorteo.id, encontrado.nombre);
     if (animalito) {
       guardarCandidato(sorteo.id, fecha, animalito.id, 'pendiente_confirmacion', intento);
-      console.log(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora}: candidato encontrado (animalito #${encontrado.numero}), esperando confirmacion`);
+      console.log(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora}: candidato encontrado (${encontrado.nombre}), esperando confirmacion`);
       return;
     }
   }
