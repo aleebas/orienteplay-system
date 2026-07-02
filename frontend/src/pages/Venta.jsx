@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV, getTicket, pagarPremio } from '../api/cliente';
+import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV, getTicket, pagarPremio, consultarCupoLote } from '../api/cliente';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
@@ -25,6 +25,21 @@ const normNum = s => s.replace(/^0+/, '') || s;
 // carrito en vez de duplicarla cuando se recalcula en cada cambio.
 function comboKey(sorteoId, modoId, animalitoIds) {
   return `${sorteoId}|${modoId}|${[...animalitoIds].sort((a, b) => a - b).join(',')}`;
+}
+
+function cupoKey(animalitoId, sorteoId) {
+  return `${animalitoId}|${sorteoId}`;
+}
+
+const POLL_CUPO_MS = 7000;
+
+// Mismos umbrales que SemaforoDot en Dashboard.jsx, para que el color de
+// la barra sea consistente con el resto de la app.
+function cupoBarClase(pct) {
+  if (pct >= 100) return 'cupo-bar-bloqueado';
+  if (pct >= 80) return 'cupo-bar-rojo';
+  if (pct >= 50) return 'cupo-bar-amarillo';
+  return 'cupo-bar-verde';
 }
 
 export default function Venta() {
@@ -61,6 +76,15 @@ export default function Venta() {
   const [selecMulti, setSelecMulti] = useState({});
   const [inputNumero, setInputNumero] = useState('');
   const [errorNumero, setErrorNumero] = useState('');
+
+  // Cupo restante por animalito+sorteo, consultado en vivo mientras se
+  // arma la jugada (ver useEffect de polling más abajo). Clave
+  // "animalitoId|sorteoId" -> { tiene_limite, monto_max, acumulado,
+  // restante, agotado, modo_accion }.
+  const [cupos, setCupos] = useState({});
+  // Aviso breve por animalito cuando su monto se auto-ajustó al cupo
+  // disponible. Se limpia en el próximo cambio de ese mismo campo.
+  const [avisoCupo, setAvisoCupo] = useState({});
 
   // Selección de modos con más de un animalito (tripleta y similares)
   const [animTripleta, setAnimTripleta] = useState([]);
@@ -209,6 +233,11 @@ export default function Venta() {
     sesionRef.current += 1;
     setModo(m);
     resetJugada();
+    // Comodín no elige animalito: siempre apuesta al #75 (GUACHARO) fijo.
+    if (m.slug === 'comodin') {
+      const fijo = loteria.animalitos.find(a => a.numero === '75');
+      if (fijo) setSelecMulti({ [fijo.id]: { animalito: fijo, monto: '' } });
+    }
   }
 
   // ── Toggle de horarios: solo suma/quita, sin navegar a ningún lado ──
@@ -355,6 +384,92 @@ export default function Venta() {
       return siguen;
     });
   }, [loteria, modo, horariosSelec, selecMulti, animTripleta, montoTripleta]);
+
+  // ── Cupo en vivo por animalito+sorteo ──────────────────────
+  // Solo aplica a modos de 1 animalito (Directo, Comodín) -- Tripleta
+  // comparte un monto entre 3 animalitos con límites potencialmente
+  // distintos, un problema aparte que no está cubierto acá. Se consulta
+  // al agregar/cambiar animalitos u horarios, y se repite cada
+  // POLL_CUPO_MS mientras haya algo que mirar, para notar si otro
+  // usuario vendió del mismo cupo mientras se arma esta jugada. El gate
+  // real contra pasarse del cupo sigue siendo el backend en
+  // POST /jugadas (sincrono, sin condicion de carrera posible ahi) --
+  // esto es solo aviso anticipado, por eso alcanza con polling en vez
+  // de empujar cambios desde el backend.
+  const idsSelecMultiKey = Object.keys(selecMulti).sort().join(',');
+  useEffect(() => {
+    if (!loteria || !modo || modo.cantidad_animalitos !== 1 || horariosSelec.length === 0) return;
+    const animalitos = Object.values(selecMulti).map(x => x.animalito);
+    if (animalitos.length === 0) return;
+
+    const combos = [];
+    for (const a of animalitos) {
+      for (const s of horariosSelec) combos.push({ animalito_id: a.id, sorteo_id: s.id });
+    }
+
+    let cancelado = false;
+    async function consultar() {
+      try {
+        const { resultados } = await consultarCupoLote(TODAY(), combos);
+        if (cancelado) return;
+        setCupos(prev => {
+          const next = { ...prev };
+          resultados.forEach((r, idx) => {
+            next[cupoKey(combos[idx].animalito_id, combos[idx].sorteo_id)] = r;
+          });
+          return next;
+        });
+      } catch {
+        // Si falla la consulta de cupo no se bloquea nada -- el gate
+        // real sigue siendo el backend al confirmar la venta.
+      }
+    }
+
+    consultar();
+    const t = setInterval(consultar, POLL_CUPO_MS);
+    return () => { cancelado = true; clearInterval(t); };
+  }, [loteria, modo, horariosSelec, idsSelecMultiKey]);
+
+  // Cupo mas restrictivo (menor "restante") entre los horarios
+  // actualmente seleccionados para un animalito -- el monto es
+  // compartido entre todos esos horarios, asi que nunca debe superar al
+  // mas ajustado. null = sin limite conocido configurado para ninguno
+  // (no hace falta ajustar ni mostrar barra).
+  function cupoMasRestrictivoPara(animalitoId) {
+    let elegido = null;
+    for (const s of horariosSelec) {
+      const info = cupos[cupoKey(animalitoId, s.id)];
+      if (!info || !info.tiene_limite) continue;
+      if (!elegido || info.restante < elegido.restante) elegido = { ...info, sorteoId: s.id, hora: s.hora };
+    }
+    return elegido;
+  }
+
+  // Cuánto de esta misma venta ya está en el carrito para un
+  // animalito+sorteo puntual (el cupo del backend solo cuenta lo ya
+  // vendido en jugadas confirmadas, no lo que la operadora está armando
+  // ahora mismo -- la barra tiene que sumar ambas cosas).
+  function montoEnCarritoPara(animalitoId, sorteoId) {
+    return carrito
+      .filter(i => i.sorteo_id === sorteoId && i.animalito_ids.length === 1 && i.animalito_ids[0] === animalitoId)
+      .reduce((s, i) => s + i.monto, 0);
+  }
+
+  function handleMontoAnimalito(animalitoId, value) {
+    const cupo = cupoMasRestrictivoPara(animalitoId);
+    let valorFinal = value;
+    if (cupo && parseFloat(value) > cupo.restante) {
+      valorFinal = String(cupo.restante);
+      setAvisoCupo(prev => ({ ...prev, [animalitoId]: `Ajustado a ${fmt(cupo.restante)} — cupo casi agotado para este animalito` }));
+    } else if (avisoCupo[animalitoId]) {
+      setAvisoCupo(prev => {
+        const next = { ...prev };
+        delete next[animalitoId];
+        return next;
+      });
+    }
+    setSelecMulti(prev => ({ ...prev, [animalitoId]: { ...prev[animalitoId], monto: valorFinal } }));
+  }
 
   // ── Aplicar la misma jugada armada a otra lotería ─────────
   // Único lugar que sigue llamando a validarJugadas explícitamente: es
@@ -598,6 +713,7 @@ export default function Venta() {
   // mal clasificado como tripleta por no ser exactamente "directo".
   const esDirecto = modo?.cantidad_animalitos === 1;
   const esTripleta = modo && modo.cantidad_animalitos > 1;
+  const esComodin = modo?.slug === 'comodin';
   const esGuacharo = loteria?.slug === 'guacharoactivo';
   const hayJugadaArmada = !!modo && (Object.keys(selecMulti).length > 0 || animTripleta.length > 0);
   const totalSelecMulti = Object.values(selecMulti).reduce((s, x) => s + (parseFloat(x.monto) || 0), 0);
@@ -816,29 +932,40 @@ export default function Venta() {
                 {modo && esDirecto && (
                   <div className="jugada-builder">
                     <div className="jugada-tablero">
-                      <h3 style={{ marginBottom: 8 }}>Elige animalito(s)</h3>
-                      <div className="numero-rapido-wrap">
-                        <input
-                          ref={inputNumeroRef}
-                          className="numero-rapido"
-                          type="text"
-                          value={inputNumero}
-                          onChange={e => { setInputNumero(e.target.value); setErrorNumero(''); }}
-                          onKeyDown={handleInputNumero}
-                          placeholder="Buscar por N° (ej: 06, 12) y presiona Enter"
-                        />
-                        {errorNumero && <span className="numero-error">{errorNumero}</span>}
-                      </div>
-                      <div className={esGuacharo ? 'animalito-grid-wrap-scroll' : undefined}>
-                        <SelectorAnimalito
-                          animalitos={loteria.animalitos}
-                          seleccionados={Object.values(selecMulti).map(x => x.animalito)}
-                          cantidad={1}
-                          onSelect={toggleAnimMulti}
-                          limitarSeleccion={false}
-                          loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
-                        />
-                      </div>
+                      {esComodin ? (
+                        <>
+                          <h3 style={{ marginBottom: 8 }}>Comodín Guácharo</h3>
+                          <p className="text-muted text-sm">
+                            Este modo siempre apuesta al animalito fijo #75 (GUACHARO), paga x{modo.multiplicador}.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <h3 style={{ marginBottom: 8 }}>Elige animalito(s)</h3>
+                          <div className="numero-rapido-wrap">
+                            <input
+                              ref={inputNumeroRef}
+                              className="numero-rapido"
+                              type="text"
+                              value={inputNumero}
+                              onChange={e => { setInputNumero(e.target.value); setErrorNumero(''); }}
+                              onKeyDown={handleInputNumero}
+                              placeholder="Buscar por N° (ej: 06, 12) y presiona Enter"
+                            />
+                            {errorNumero && <span className="numero-error">{errorNumero}</span>}
+                          </div>
+                          <div className={esGuacharo ? 'animalito-grid-wrap-scroll' : undefined}>
+                            <SelectorAnimalito
+                              animalitos={loteria.animalitos}
+                              seleccionados={Object.values(selecMulti).map(x => x.animalito)}
+                              cantidad={1}
+                              onSelect={toggleAnimMulti}
+                              limitarSeleccion={false}
+                              loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
+                            />
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     <div className="jugada-seleccion">
@@ -846,34 +973,59 @@ export default function Venta() {
                       {Object.keys(selecMulti).length === 0 ? (
                         <div className="multi-empty">Toca un animalito<br />para agregarlo aquí</div>
                       ) : (
-                        Object.values(selecMulti).map(({ animalito, monto }) => (
-                          <div key={animalito.id} className="multi-anim-item">
-                            <div className="multi-anim-info">
-                              <span className="multi-anim-emoji">{EMOJI_MAP[animalito.nombre] || '🐾'}</span>
-                              <span className="multi-anim-label">{animalito.nombre}</span>
-                              <span className="multi-anim-sub">#{animalito.numero}</span>
+                        Object.values(selecMulti).map(({ animalito, monto }) => {
+                          const cupo = cupoMasRestrictivoPara(animalito.id);
+                          const pct = cupo ? Math.round(((cupo.acumulado + montoEnCarritoPara(animalito.id, cupo.sorteoId)) / cupo.monto_max) * 100) : 0;
+                          return (
+                            <div key={animalito.id} className="multi-anim-item-wrap">
+                              <div className="multi-anim-item">
+                                <div className="multi-anim-info">
+                                  <span className="multi-anim-emoji">{EMOJI_MAP[animalito.nombre] || '🐾'}</span>
+                                  <span className="multi-anim-label">{animalito.nombre}</span>
+                                  <span className="multi-anim-sub">#{animalito.numero}</span>
+                                </div>
+                                {cupo && cupo.agotado ? (
+                                  <input className="multi-anim-monto" type="text" value="Agotado" disabled />
+                                ) : (
+                                  <input
+                                    ref={el => montoRefs.current[animalito.id] = el}
+                                    className="multi-anim-monto"
+                                    type="number"
+                                    min="1"
+                                    step="0.01"
+                                    placeholder="Bs."
+                                    value={monto}
+                                    onChange={e => handleMontoAnimalito(animalito.id, e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') {
+                                        setTimeout(() => inputNumeroRef.current?.focus(), 30);
+                                      }
+                                    }}
+                                  />
+                                )}
+                                {!esComodin && (
+                                  <button className="multi-anim-del" onClick={() => toggleAnimMulti(animalito)}>✕</button>
+                                )}
+                              </div>
+                              {cupo && cupo.agotado && (
+                                <p className="cupo-agotado-msg">Cupo agotado para este animalito en este horario</p>
+                              )}
+                              {avisoCupo[animalito.id] && (
+                                <p className="cupo-aviso-msg">{avisoCupo[animalito.id]}</p>
+                              )}
+                              {cupo && !cupo.agotado && (
+                                <div className="cupo-bar-wrap">
+                                  <div className="cupo-bar-track">
+                                    <div className={`cupo-bar-fill ${cupoBarClase(pct)}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                                  </div>
+                                  <span className="cupo-bar-label">
+                                    {pct}% del cupo{horariosSelec.length > 1 ? ` (${hora12(cupo.hora)})` : ''}
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                            <input
-                              ref={el => montoRefs.current[animalito.id] = el}
-                              className="multi-anim-monto"
-                              type="number"
-                              min="1"
-                              step="0.01"
-                              placeholder="Bs."
-                              value={monto}
-                              onChange={e => setSelecMulti(prev => ({
-                                ...prev,
-                                [animalito.id]: { ...prev[animalito.id], monto: e.target.value },
-                              }))}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') {
-                                  setTimeout(() => inputNumeroRef.current?.focus(), 30);
-                                }
-                              }}
-                            />
-                            <button className="multi-anim-del" onClick={() => toggleAnimMulti(animalito)}>✕</button>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
 
                       {Object.keys(selecMulti).length > 0 && (

@@ -7,7 +7,11 @@ const { sorteoEstaAbierto } = require('../utils/sorteoCierre');
 const router = express.Router();
 router.use(requireAuth);
 
-function revisarLimite({ agenciaId, animalitoId, sorteoId, fechaSorteo, montoNuevo }) {
+// Busca el limite mas especifico configurado para un animalito: primero
+// el que aplica a este sorteo puntual, si no hay usa el que aplica a
+// todos los sorteos de ese animalito (sorteo_id IS NULL). Devuelve null
+// si no hay ningun limite activo configurado.
+function buscarLimite(agenciaId, animalitoId, sorteoId) {
   let limite = db.prepare(
     `SELECT * FROM limites_apuesta
      WHERE agencia_id = ? AND animalito_id = ? AND sorteo_id = ? AND activo = 1`
@@ -19,6 +23,47 @@ function revisarLimite({ agenciaId, animalitoId, sorteoId, fechaSorteo, montoNue
        WHERE agencia_id = ? AND animalito_id = ? AND sorteo_id IS NULL AND activo = 1`
     ).get(agenciaId, animalitoId);
   }
+
+  return limite || null;
+}
+
+// Cuanto se lleva vendido hoy (todos los usuarios/cajas de la agencia)
+// para un animalito en un sorteo puntual.
+function acumuladoHoy(animalitoId, sorteoId, fechaSorteo, agenciaId) {
+  return db.prepare(
+    `SELECT COALESCE(SUM(j.monto), 0) AS total
+     FROM jugada_animalitos ja
+     JOIN jugadas j ON j.id = ja.jugada_id
+     WHERE ja.animalito_id = ? AND j.sorteo_id = ? AND j.fecha_sorteo = ? AND j.agencia_id = ?`
+  ).get(animalitoId, sorteoId, fechaSorteo, agenciaId).total;
+}
+
+// ------------------------------------------------------------
+// Consulta de solo lectura: "cuanto queda" de cupo para un
+// animalito+sorteo, sin intentar validar un monto nuevo. Pensada para
+// que la taquilla la consulte mientras arma la jugada (barra de
+// progreso / auto-ajuste), no solo al confirmar la venta -- el gate
+// real sigue siendo revisarLimite() en validarJugada, esto es un
+// espejo de solo lectura de la misma fuente de datos.
+// ------------------------------------------------------------
+function consultarCupo({ agenciaId, animalitoId, sorteoId, fechaSorteo }) {
+  const limite = buscarLimite(agenciaId, animalitoId, sorteoId);
+  if (!limite) return { tiene_limite: false };
+
+  const acumulado = acumuladoHoy(animalitoId, sorteoId, fechaSorteo, agenciaId);
+  return {
+    tiene_limite: true,
+    monto_max: limite.monto_max,
+    monto_max_ticket: limite.monto_max_ticket,
+    modo_accion: limite.modo_accion,
+    acumulado,
+    restante: Math.max(0, limite.monto_max - acumulado),
+    agotado: acumulado >= limite.monto_max,
+  };
+}
+
+function revisarLimite({ agenciaId, animalitoId, sorteoId, fechaSorteo, montoNuevo }) {
+  const limite = buscarLimite(agenciaId, animalitoId, sorteoId);
 
   if (!limite) {
     return { permitido: true, tiene_limite: false };
@@ -34,12 +79,7 @@ function revisarLimite({ agenciaId, animalitoId, sorteoId, fechaSorteo, montoNue
     };
   }
 
-  const acumulado = db.prepare(
-    `SELECT COALESCE(SUM(j.monto), 0) AS total
-     FROM jugada_animalitos ja
-     JOIN jugadas j ON j.id = ja.jugada_id
-     WHERE ja.animalito_id = ? AND j.sorteo_id = ? AND j.fecha_sorteo = ? AND j.agencia_id = ?`
-  ).get(animalitoId, sorteoId, fechaSorteo, agenciaId).total;
+  const acumulado = acumuladoHoy(animalitoId, sorteoId, fechaSorteo, agenciaId);
 
   const acumuladoNuevo = acumulado + montoNuevo;
 
@@ -192,6 +232,31 @@ router.post('/validar', (req, res) => {
 
   const algunError = resultados.some(r => !r.ok);
   res.json({ permitido: !algunError, resultados });
+});
+
+// ------------------------------------------------------------
+// POST /jugadas/cupo-lote
+// Consulta de solo lectura del cupo restante para varios pares
+// animalito+sorteo a la vez (la taquilla la usa mientras arma la
+// jugada, no al confirmar -- eso sigue pasando por validarJugada). No
+// requiere admin: cualquier vendedor la necesita para ver el cupo en
+// vivo mientras vende.
+// ------------------------------------------------------------
+router.post('/cupo-lote', (req, res) => {
+  const { combos } = req.body;
+  const fecha = req.body.fecha || new Date().toISOString().slice(0, 10);
+  if (!Array.isArray(combos)) {
+    return res.status(400).json({ error: 'combos debe ser un arreglo' });
+  }
+
+  const resultados = combos.map(c => consultarCupo({
+    agenciaId: req.user.agencia_id,
+    animalitoId: c.animalito_id,
+    sorteoId: c.sorteo_id,
+    fechaSorteo: fecha,
+  }));
+
+  res.json({ resultados });
 });
 
 const METODOS_PAGO = ['efectivo', 'pago_movil', 'biopago', 'credito'];

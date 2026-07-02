@@ -47,6 +47,9 @@ export const getResumenCaja = (id) =>
 export const validarJugadas = (jugadas) =>
   req('POST', '/jugadas/validar', { jugadas });
 
+export const consultarCupoLote = (fecha, combos) =>
+  req('POST', '/jugadas/cupo-lote', { fecha, combos });
+
 export const registrarVenta = (payload) =>
   req('POST', '/jugadas', payload);
 

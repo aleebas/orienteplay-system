@@ -824,14 +824,16 @@ small { font-size: 0.8rem; color: var(--text-muted); }
 .numero-error { font-size: 0.75rem; color: var(--danger); margin-top: 2px; display: block; }
 
 /* ── Multi-animalito seleccionados ── */
+.multi-anim-item-wrap {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.multi-anim-item-wrap:last-child { border-bottom: none; }
 .multi-anim-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
 }
-.multi-anim-item:last-child { border-bottom: none; }
 .multi-anim-info { flex: 1; min-width: 0; }
 .multi-anim-emoji { font-size: 1.1rem; line-height: 1; }
 .multi-anim-label { font-size: 0.78rem; font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -862,6 +864,24 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   transition: opacity 0.15s;
 }
 .multi-anim-del:hover { opacity: 1; }
+
+/* ── Cupo por animalito: aviso de ajuste, agotado y barra ── */
+.cupo-aviso-msg { font-size: 0.68rem; color: var(--warning); margin-top: 2px; }
+.cupo-agotado-msg { font-size: 0.68rem; color: var(--danger); margin-top: 2px; font-weight: 600; }
+.cupo-bar-wrap { margin-top: 4px; }
+.cupo-bar-track {
+  height: 5px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.cupo-bar-fill { height: 100%; border-radius: 4px; transition: width 0.2s; }
+.cupo-bar-fill.cupo-bar-verde    { background: var(--success); }
+.cupo-bar-fill.cupo-bar-amarillo { background: var(--warning); }
+.cupo-bar-fill.cupo-bar-rojo     { background: var(--danger); }
+.cupo-bar-fill.cupo-bar-bloqueado { background: #333; }
+.cupo-bar-label { font-size: 0.65rem; color: var(--text-muted); }
+
 .multi-total {
   padding: 8px 0 4px;
   font-weight: 700;
