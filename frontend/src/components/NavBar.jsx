@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getResumenCaja } from '../api/cliente';
+import { getResumenCaja, getTasaBCV } from '../api/cliente';
 import { fmt } from '../utils/formato';
 
 export default function NavBar() {
@@ -9,6 +9,7 @@ export default function NavBar() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [totalHoy, setTotalHoy] = useState(null);
+  const [tasaBCV, setTasaBCV] = useState(null);
 
   useEffect(() => {
     if (!caja?.id) { setTotalHoy(null); return; }
@@ -20,6 +21,13 @@ export default function NavBar() {
     const t = setInterval(load, 60000);
     return () => clearInterval(t);
   }, [caja?.id]);
+
+  useEffect(() => {
+    const load = () => getTasaBCV().then(r => setTasaBCV(r.tasa)).catch(() => {});
+    load();
+    const t = setInterval(load, 5 * 60000);
+    return () => clearInterval(t);
+  }, []);
 
   function handleLogout() { logout(); navigate('/login'); }
 
@@ -61,6 +69,9 @@ export default function NavBar() {
             {l.label}
           </NavLink>
         ))}
+        {tasaBCV != null && (
+          <span className="navbar-badge navbar-badge-bcv" title="Tasa BCV">💵 {tasaBCV.toFixed(2)}</span>
+        )}
         {totalHoy !== null && (
           <span className="navbar-badge">{fmt(totalHoy)}</span>
         )}

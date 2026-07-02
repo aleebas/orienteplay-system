@@ -57,6 +57,7 @@ app.use('/api/pagos', require('./routes/pagos'));
 app.use('/api/agencias', require('./routes/agencias'));
 app.use('/api/reportes', require('./routes/reportes'));
 app.use('/api/usuarios', require('./routes/usuarios'));
+app.use('/api/bcv', require('./routes/bcv'));
 
 // La impresora térmica es hardware USB local: si el driver nativo (escpos-usb)
 // no está disponible en este servidor (p.ej. un contenedor cloud sin USB),
@@ -90,4 +91,16 @@ app.listen(PORT, HOST, () => {
   console.log(`Zona horaria: America/Caracas — ${new Date().toLocaleString('es-VE')}`);
   if (devMode) console.log(`⚡ MODO DESARROLLO: horario de sorteos sin restricción`);
   console.log(`Celulares en la misma red WiFi: http://[IP-DE-ESTE-PC]:${PORT}`);
+
+  try {
+    require('./utils/resultadosAuto').iniciar();
+  } catch (err) {
+    console.error('No se pudo iniciar el scheduler de resultados automáticos:', err.message);
+  }
+
+  try {
+    require('./utils/bcvTasa').iniciar();
+  } catch (err) {
+    console.error('No se pudo iniciar el scheduler de tasa BCV:', err.message);
+  }
 });

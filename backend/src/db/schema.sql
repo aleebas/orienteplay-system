@@ -105,6 +105,27 @@ CREATE TABLE IF NOT EXISTS resultados (
 );
 
 -- ----------------------------------------------------------
+-- RESULTADOS_CANDIDATOS: hallazgos del scraper automatico
+-- (backend/src/utils/resultadosAuto.js) a la espera de que un
+-- admin los confirme con un clic. Nunca se paga ni se marcan
+-- tickets ganadores desde aqui directamente -- confirmar copia
+-- el dato hacia RESULTADOS pasando por el mismo endpoint que
+-- usa la carga manual.
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS resultados_candidatos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sorteo_id INTEGER NOT NULL REFERENCES sorteos(id),
+  fecha TEXT NOT NULL,
+  animalito_id INTEGER REFERENCES animalitos(id),
+  estado TEXT NOT NULL DEFAULT 'pendiente_confirmacion'
+    CHECK (estado IN ('pendiente_confirmacion', 'confirmado', 'descartado', 'agotado')),
+  intentos INTEGER NOT NULL DEFAULT 0,
+  creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+  actualizado_en TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(sorteo_id, fecha)
+);
+
+-- ----------------------------------------------------------
 -- LIMITES_APUESTA: control de banca propia. Define el monto
 -- máximo aceptado por animalito/sorteo, por agencia.
 -- modo_accion: 'bloquear' detiene la venta automáticamente,
@@ -170,7 +191,8 @@ CREATE TABLE IF NOT EXISTS jugadas (
   cliente_nombre TEXT,
   cliente_telefono TEXT,
   monto REAL NOT NULL,
-  metodo_pago TEXT NOT NULL DEFAULT 'efectivo' CHECK (metodo_pago IN ('efectivo', 'pago_movil', 'biopago')),
+  metodo_pago TEXT NOT NULL DEFAULT 'efectivo' CHECK (metodo_pago IN ('efectivo', 'pago_movil', 'biopago', 'credito')),
+  cobrado INTEGER NOT NULL DEFAULT 1, -- ventas a credito nacen en 0 hasta que se marcan como pagadas
   creada_en TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

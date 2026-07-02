@@ -95,6 +95,40 @@ function validarJugada({ agenciaId, sorteoId, modoJuegoId, animalitoIds, monto, 
   return { ok: true, sorteo, modo, revisiones, conAlerta };
 }
 
+// Ventas a credito sin cobrar (cualquier fecha, no solo hoy -- un
+// cliente puede tardar dias en pagar).
+router.get('/creditos-pendientes', (req, res) => {
+  const rows = db.prepare(`
+    SELECT j.id AS jugada_id, j.creada_en, j.monto, j.fecha_sorteo,
+           j.cliente_nombre, j.cliente_telefono,
+           l.nombre AS loteria_nombre, s.hora AS sorteo_hora,
+           GROUP_CONCAT(a.numero || '-' || a.nombre, ', ') AS animalitos
+    FROM jugadas j
+    JOIN sorteos s ON s.id = j.sorteo_id
+    JOIN loterias l ON l.id = s.loteria_id
+    JOIN jugada_animalitos ja ON ja.jugada_id = j.id
+    JOIN animalitos a ON a.id = ja.animalito_id
+    WHERE j.agencia_id = ? AND j.metodo_pago = 'credito' AND j.cobrado = 0
+    GROUP BY j.id
+    ORDER BY j.creada_en ASC
+  `).all(req.user.agencia_id);
+  res.json(rows);
+});
+
+router.post('/:id/cobrar', (req, res) => {
+  const jugada = db.prepare(`SELECT * FROM jugadas WHERE id = ? AND agencia_id = ?`).get(req.params.id, req.user.agencia_id);
+  if (!jugada) return res.status(404).json({ error: 'Jugada no encontrada' });
+  if (jugada.metodo_pago !== 'credito') {
+    return res.status(400).json({ error: 'Esta jugada no es una venta a crédito' });
+  }
+  if (jugada.cobrado) {
+    return res.status(409).json({ error: 'Esta venta ya fue marcada como cobrada' });
+  }
+
+  db.prepare(`UPDATE jugadas SET cobrado = 1 WHERE id = ?`).run(jugada.id);
+  res.json({ mensaje: 'Venta marcada como cobrada' });
+});
+
 // Lista de tickets del dia con filtros (para la pantalla de Tickets)
 router.get('/', (req, res) => {
   const { fecha, estado, q } = req.query;
@@ -160,11 +194,16 @@ router.post('/validar', (req, res) => {
   res.json({ permitido: !algunError, resultados });
 });
 
-const METODOS_PAGO = ['efectivo', 'pago_movil', 'biopago'];
+const METODOS_PAGO = ['efectivo', 'pago_movil', 'biopago', 'credito'];
 
 router.post('/', (req, res) => {
   const { caja_id, cliente_nombre, cliente_telefono, forzar_aunque_alerte } = req.body;
   const metodoPago = METODOS_PAGO.includes(req.body.metodo_pago) ? req.body.metodo_pago : 'efectivo';
+  const cobrado = metodoPago === 'credito' ? 0 : 1;
+
+  if (metodoPago === 'credito' && (!cliente_nombre || !cliente_telefono)) {
+    return res.status(400).json({ error: 'Las ventas a crédito requieren nombre y teléfono del cliente' });
+  }
   const lista = req.body.jugadas || [{
     sorteo_id: req.body.sorteo_id,
     modo_juego_id: req.body.modo_juego_id,
@@ -228,9 +267,9 @@ router.post('/', (req, res) => {
       const fecha = v.fecha;
 
       const jugadaResult = db.prepare(
-        `INSERT INTO jugadas (venta_id, agencia_id, caja_id, usuario_id, sorteo_id, modo_juego_id, fecha_sorteo, cliente_nombre, cliente_telefono, monto, metodo_pago)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(ventaId, req.user.agencia_id, caja_id, req.user.id, j.sorteo_id, j.modo_juego_id, fecha, cliente_nombre || null, cliente_telefono || null, j.monto, metodoPago);
+        `INSERT INTO jugadas (venta_id, agencia_id, caja_id, usuario_id, sorteo_id, modo_juego_id, fecha_sorteo, cliente_nombre, cliente_telefono, monto, metodo_pago, cobrado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(ventaId, req.user.agencia_id, caja_id, req.user.id, j.sorteo_id, j.modo_juego_id, fecha, cliente_nombre || null, cliente_telefono || null, j.monto, metodoPago, cobrado);
       const jugadaId = jugadaResult.lastInsertRowid;
 
       const insertAnimalito = db.prepare(

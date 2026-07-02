@@ -77,6 +77,15 @@ export const getResultadosFecha = (fecha) =>
 export const getGanadoresPendientes = (fecha) =>
   req('GET', `/resultados/ganadores-pendientes${fecha ? `?fecha=${fecha}` : ''}`);
 
+export const getCandidatosResultados = (fecha) =>
+  req('GET', `/resultados/candidatos${fecha ? `?fecha=${fecha}` : ''}`);
+
+export const confirmarCandidato = (id) =>
+  req('POST', `/resultados/candidatos/${id}/confirmar`);
+
+export const descartarCandidato = (id) =>
+  req('POST', `/resultados/candidatos/${id}/descartar`);
+
 export const pagarPremio = (codigoTicket, caja_id) =>
   req('POST', `/pagos/${codigoTicket}`, { caja_id });
 
@@ -127,5 +136,14 @@ export const eliminarUsuario = (id) =>
 
 export const imprimirTicket = (ventaData, agenciaNombre) =>
   req('POST', '/imprimir', { venta: ventaData.venta, jugadas: ventaData.jugadas, agenciaNombre });
+
+export const getTasaBCV = () =>
+  req('GET', '/bcv/tasa');
+
+export const getCreditosPendientes = () =>
+  req('GET', '/jugadas/creditos-pendientes');
+
+export const marcarCreditoCobrado = (jugadaId) =>
+  req('POST', `/jugadas/${jugadaId}/cobrar`);
 
 export const API = { get: (path) => req('GET', path) };

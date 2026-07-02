@@ -92,14 +92,25 @@ export default function Reportes() {
     setSavingLimite(true);
     setLimiteMsg('');
     try {
-      await guardarLimite(agenciaId, {
-        animalito_id: parseInt(formLimite.animalito_id),
+      const payloadBase = {
         sorteo_id: formLimite.sorteo_id ? parseInt(formLimite.sorteo_id) : null,
         monto_max: parseFloat(formLimite.monto_max),
         monto_max_ticket: formLimite.monto_max_ticket ? parseFloat(formLimite.monto_max_ticket) : null,
         modo_accion: formLimite.modo_accion,
-      });
-      setLimiteMsg('Límite guardado');
+      };
+
+      if (formLimite.animalito_id === 'todos') {
+        const animalitos = loteriaSelec?.animalitos || [];
+        for (let i = 0; i < animalitos.length; i++) {
+          setLimiteMsg(`Guardando ${i + 1}/${animalitos.length}...`);
+          await guardarLimite(agenciaId, { ...payloadBase, animalito_id: animalitos[i].id });
+        }
+        setLimiteMsg(`${animalitos.length} límites guardados (todos los animalitos de ${loteriaSelec?.nombre})`);
+      } else {
+        await guardarLimite(agenciaId, { ...payloadBase, animalito_id: parseInt(formLimite.animalito_id) });
+        setLimiteMsg('Límite guardado');
+      }
+
       setFormLimite({ loteria_id: '', animalito_id: '', sorteo_id: '', monto_max: '', monto_max_ticket: '', modo_accion: 'alertar' });
       cargarLimites();
     } catch (err) {
@@ -339,8 +350,14 @@ export default function Reportes() {
                     <label>Animalito</label>
                     <select value={formLimite.animalito_id} onChange={e => setFormLimite(f => ({ ...f, animalito_id: e.target.value }))}>
                       <option value="">-- Seleccionar --</option>
+                      <option value="todos">🌐 Todos los animalitos ({loteriaSelec.animalitos.length})</option>
                       {loteriaSelec.animalitos.map(a => <option key={a.id} value={a.id}>{a.numero} - {a.nombre}</option>)}
                     </select>
+                    {formLimite.animalito_id === 'todos' && (
+                      <div className="text-muted text-sm" style={{ marginTop: 4 }}>
+                        Se creará un límite individual para cada uno de los {loteriaSelec.animalitos.length} animalitos de {loteriaSelec.nombre}.
+                      </div>
+                    )}
                   </div>
                   <div className="field">
                     <label>Sorteo (opcional — dejar vacío para todos)</label>

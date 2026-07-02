@@ -8,6 +8,9 @@ import {
   getLimitesUso,
   getTopAnimalitos,
   getTopLoterias,
+  getCandidatosResultados,
+  confirmarCandidato,
+  descartarCandidato,
 } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import { fmt, horaVenezuela, hora12 } from '../utils/formato';
@@ -41,12 +44,14 @@ export default function Dashboard() {
   const [limitesUso, setLimitesUso] = useState([]);
   const [topAnimalitos, setTopAnimalitos] = useState([]);
   const [topLoterias, setTopLoterias] = useState([]);
+  const [candidatos, setCandidatos] = useState([]);
+  const [procesandoCandidato, setProcesandoCandidato] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
 
   const cargar = useCallback(async () => {
     const fecha = TODAY();
-    const [r1, r2, r3, r4, r5, r6, r7] = await Promise.allSettled([
+    const [r1, r2, r3, r4, r5, r6, r7, r8] = await Promise.allSettled([
       caja?.id ? getResumenCaja(caja.id) : Promise.resolve(null),
       getReporteVentasPorLoteria(fecha),
       getReporteVentasPorVendedor(fecha),
@@ -54,6 +59,7 @@ export default function Dashboard() {
       getLimitesUso(),
       getTopAnimalitos(fecha),
       getTopLoterias(fecha),
+      getCandidatosResultados(fecha),
     ]);
     if (r1.status === 'fulfilled') setResumen(r1.value);
     if (r2.status === 'fulfilled') setPorLoteria(r2.value || []);
@@ -62,8 +68,28 @@ export default function Dashboard() {
     if (r5.status === 'fulfilled') setLimitesUso(r5.value || []);
     if (r6.status === 'fulfilled') setTopAnimalitos(r6.value || []);
     if (r7.status === 'fulfilled') setTopLoterias(r7.value || []);
+    if (r8.status === 'fulfilled') setCandidatos(r8.value || []);
     setLastUpdate(new Date());
   }, [caja?.id]);
+
+  async function handleConfirmarCandidato(c) {
+    setProcesandoCandidato(c.id);
+    try {
+      await confirmarCandidato(c.id);
+      await cargar();
+    } catch {}
+    finally { setProcesandoCandidato(null); }
+  }
+
+  async function handleDescartarCandidato(c) {
+    if (!confirm('¿Descartar este hallazgo automático?')) return;
+    setProcesandoCandidato(c.id);
+    try {
+      await descartarCandidato(c.id);
+      await cargar();
+    } catch {}
+    finally { setProcesandoCandidato(null); }
+  }
 
   useEffect(() => {
     cargar().finally(() => setLoading(false));
@@ -93,6 +119,46 @@ export default function Dashboard() {
           {' · Refresca cada 30s'}
         </span>
       </div>
+
+      {candidatos.length > 0 && (
+        <div className="card" style={{ border: '2px solid var(--warning)' }}>
+          <h2>🤖 Resultados automáticos por revisar</h2>
+          {candidatos.map(c => (
+            <div key={c.id} className="flex justify-between align-center" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <span className="bold">{c.loteria_nombre} — {hora12(c.sorteo_hora)}</span>
+                {c.estado === 'pendiente_confirmacion' ? (
+                  <span className="badge badge-warning" style={{ marginLeft: 8 }}>
+                    {EMOJI_MAP[c.animalito_nombre] || '🐾'} {c.animalito_nombre} ({c.animalito_numero}) — encontrado automáticamente
+                  </span>
+                ) : (
+                  <span className="badge badge-danger" style={{ marginLeft: 8 }}>
+                    Sin resultado tras {c.intentos} intentos — cargar manualmente en Resultados
+                  </span>
+                )}
+              </div>
+              {c.estado === 'pendiente_confirmacion' && (
+                <div className="flex gap-8">
+                  <button
+                    className="btn btn-success btn-sm btn-inline"
+                    disabled={procesandoCandidato === c.id}
+                    onClick={() => handleConfirmarCandidato(c)}
+                  >
+                    ✓ Confirmar
+                  </button>
+                  <button
+                    className="btn btn-outline btn-sm btn-inline"
+                    disabled={procesandoCandidato === c.id}
+                    onClick={() => handleDescartarCandidato(c)}
+                  >
+                    Descartar
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Fila 1: Métricas principales ── */}
       <div className="metrics-grid">

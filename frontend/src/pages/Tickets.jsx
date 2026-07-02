@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getTickets, getTicket, anularVenta } from '../api/cliente';
+import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import { hora12, fmt, horaVenezuela } from '../utils/formato';
 
@@ -39,6 +39,8 @@ function badgeClase(estado) {
 }
 
 export default function Tickets() {
+  const [vista, setVista] = useState('tickets');
+
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -52,9 +54,43 @@ export default function Tickets() {
   const [anulandoId, setAnulandoId] = useState(null);
   const [errorAnular, setErrorAnular] = useState('');
 
+  const [creditos, setCreditos] = useState([]);
+  const [loadingCreditos, setLoadingCreditos] = useState(true);
+  const [errorCreditos, setErrorCreditos] = useState('');
+  const [cobrandoId, setCobrandoId] = useState(null);
+
   useEffect(() => {
     cargarTickets();
   }, []);
+
+  useEffect(() => {
+    if (vista === 'creditos') cargarCreditos();
+  }, [vista]);
+
+  async function cargarCreditos() {
+    setLoadingCreditos(true);
+    setErrorCreditos('');
+    try {
+      setCreditos(await getCreditosPendientes());
+    } catch (err) {
+      setErrorCreditos(err.message || 'No se pudieron cargar los créditos pendientes');
+    } finally {
+      setLoadingCreditos(false);
+    }
+  }
+
+  async function handleCobrar(c) {
+    if (!confirm(`¿Marcar como pagado el crédito de ${c.cliente_nombre} (${fmt(c.monto)})?`)) return;
+    setCobrandoId(c.jugada_id);
+    try {
+      await marcarCreditoCobrado(c.jugada_id);
+      cargarCreditos();
+    } catch (err) {
+      setErrorCreditos(err.message || 'No se pudo marcar como pagado');
+    } finally {
+      setCobrandoId(null);
+    }
+  }
 
   async function cargarTickets() {
     setLoading(true);
@@ -106,8 +142,72 @@ export default function Tickets() {
 
   return (
     <div className="page">
-      <h1>🎫 Tickets de hoy</h1>
+      <h1>🎫 Tickets</h1>
 
+      <div className="flex gap-8 mb-12" style={{ flexWrap: 'wrap' }}>
+        <button
+          className={`btn btn-sm btn-inline ${vista === 'tickets' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setVista('tickets')}
+        >
+          Tickets de hoy
+        </button>
+        <button
+          className={`btn btn-sm btn-inline ${vista === 'creditos' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setVista('creditos')}
+        >
+          Créditos pendientes{creditos.length > 0 ? ` (${creditos.length})` : ''}
+        </button>
+      </div>
+
+      {vista === 'creditos' && (
+        <div className="card">
+          {errorCreditos && <div className="alert alert-danger">{errorCreditos}</div>}
+          {loadingCreditos ? (
+            <div className="loading"><div className="spinner"></div></div>
+          ) : creditos.length === 0 ? (
+            <p className="text-muted text-sm">No hay créditos pendientes de cobro.</p>
+          ) : (
+            <div className="tabla-wrap">
+              <table className="tabla">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Cliente</th>
+                    <th>Teléfono</th>
+                    <th>Lotería</th>
+                    <th>Animalito(s)</th>
+                    <th>Monto</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {creditos.map(c => (
+                    <tr key={c.jugada_id}>
+                      <td>{horaVenezuela(c.creada_en)}</td>
+                      <td className="bold">{c.cliente_nombre}</td>
+                      <td>{c.cliente_telefono}</td>
+                      <td>{c.loteria_nombre}</td>
+                      <td>{c.animalitos}</td>
+                      <td className="bold text-primary">{fmt(c.monto)}</td>
+                      <td>
+                        <button
+                          className="btn btn-success btn-sm btn-inline"
+                          disabled={cobrandoId === c.jugada_id}
+                          onClick={() => handleCobrar(c)}
+                        >
+                          {cobrandoId === c.jugada_id ? '...' : 'Marcar como pagado'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {vista === 'tickets' && (
       <div className="card">
         <div className="flex gap-8 mb-12" style={{ flexWrap: 'wrap' }}>
           {ESTADOS.map(e => (
@@ -184,6 +284,7 @@ export default function Tickets() {
           </div>
         )}
       </div>
+      )}
 
       {(ticketDetalle || loadingDetalle || errorDetalle) && (
         <div className="dialog-overlay" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); }}>

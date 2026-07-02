@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket } from '../api/cliente';
+import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV } from '../api/cliente';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
@@ -55,6 +55,9 @@ export default function Venta() {
   const [clienteTelefono, setClienteTelefono] = useState('');
   const [metodoPago, setMetodoPago] = useState('efectivo');
 
+  const [tasaBCV, setTasaBCV] = useState(null);
+  const [montoUSD, setMontoUSD] = useState('');
+
   const [loadingAgregar, setLoadingAgregar] = useState(false);
   const [loadingConfirmar, setLoadingConfirmar] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -70,6 +73,11 @@ export default function Venta() {
       .catch(() => setError('No se pudo cargar el catálogo'))
       .finally(() => setLoadingCatalogo(false));
   }, [caja, navigate]);
+
+  // ── Tasa BCV para el conversor USD → Bs ───────────────────
+  useEffect(() => {
+    getTasaBCV().then(r => setTasaBCV(r.tasa)).catch(() => {});
+  }, []);
 
   // ── Focus "Nueva venta" al mostrar comprobante ────────────
   useEffect(() => {
@@ -627,12 +635,32 @@ export default function Venta() {
                 <span className="carrito-total-monto">{fmt(totalCarrito)}</span>
               </div>
 
+              {tasaBCV != null && (
+                <div className="field">
+                  <label>Convertir USD → Bs (tasa BCV: {tasaBCV.toFixed(2)})</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={montoUSD}
+                    onChange={e => setMontoUSD(e.target.value)}
+                    placeholder="0.00"
+                    style={{ minHeight: 40 }}
+                  />
+                  {montoUSD && (
+                    <div className="text-muted text-sm" style={{ marginTop: 4 }}>
+                      = {fmt(parseFloat(montoUSD) * tasaBCV)}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="field">
-                <label>Cliente (opcional)</label>
+                <label>Cliente {metodoPago === 'credito' ? '(requerido para crédito)' : '(opcional)'}</label>
                 <input type="text" value={clienteNombre} onChange={e => setClienteNombre(e.target.value)} placeholder="Nombre" style={{ minHeight: 40 }} />
               </div>
               <div className="field">
-                <label>Teléfono WhatsApp (opcional)</label>
+                <label>Teléfono {metodoPago === 'credito' ? '(requerido para crédito)' : 'WhatsApp (opcional)'}</label>
                 <input type="tel" value={clienteTelefono} onChange={e => setClienteTelefono(e.target.value)} placeholder="04121234567" style={{ minHeight: 40 }} />
               </div>
 
@@ -642,15 +670,22 @@ export default function Venta() {
                   <option value="efectivo">Efectivo</option>
                   <option value="pago_movil">Pago Móvil</option>
                   <option value="biopago">Biopago</option>
+                  <option value="credito">A crédito</option>
                 </select>
               </div>
+
+              {metodoPago === 'credito' && (
+                <div className="alert alert-warning">
+                  Esta venta quedará pendiente de cobro. Se necesita nombre y teléfono del cliente para poder ubicarlo después.
+                </div>
+              )}
 
               {error && !loadingAgregar && <div className="alert alert-danger">{error}</div>}
 
               <button
                 className="btn btn-accent"
                 onClick={() => confirmarVenta(false)}
-                disabled={loadingConfirmar}
+                disabled={loadingConfirmar || (metodoPago === 'credito' && (!clienteNombre || !clienteTelefono))}
               >
                 {loadingConfirmar ? 'Registrando...' : '✓ Confirmar venta'}
               </button>

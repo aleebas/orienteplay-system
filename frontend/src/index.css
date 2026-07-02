@@ -192,6 +192,7 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   white-space: nowrap;
   margin: 0 4px;
 }
+.navbar-badge-bcv { background: var(--success); }
 .navbar-menu-btn {
   background: none;
   border: none;

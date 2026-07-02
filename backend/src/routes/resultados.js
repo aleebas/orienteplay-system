@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db/connection');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -38,6 +38,70 @@ router.post('/', (req, res) => {
   actualizarEstadoTickets(sorteo_id, fechaResultado);
 
   res.status(201).json({ mensaje: 'Resultado registrado', resultado_id: r.lastInsertRowid });
+});
+
+// ------------------------------------------------------------
+// GET /resultados/candidatos?fecha=YYYY-MM-DD
+// Hallazgos del scraper automatico (resultadosAuto.js) pendientes
+// de confirmar, o agotados (4 intentos sin exito -> requiere carga
+// manual). Usado para la alerta prominente en Dashboard/Resultados.
+// ------------------------------------------------------------
+router.get('/candidatos', (req, res) => {
+  const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const candidatos = db.prepare(
+    `SELECT rc.*, a.nombre AS animalito_nombre, a.numero AS animalito_numero,
+            s.nombre AS sorteo_nombre, s.hora AS sorteo_hora,
+            l.nombre AS loteria_nombre
+     FROM resultados_candidatos rc
+     JOIN sorteos s ON s.id = rc.sorteo_id
+     JOIN loterias l ON l.id = s.loteria_id
+     LEFT JOIN animalitos a ON a.id = rc.animalito_id
+     WHERE rc.fecha = ? AND rc.estado IN ('pendiente_confirmacion', 'agotado')
+     ORDER BY s.hora`
+  ).all(fecha);
+  res.json(candidatos);
+});
+
+// ------------------------------------------------------------
+// POST /resultados/candidatos/:id/confirmar  (solo admin)
+// El admin confirma un hallazgo del scraper: pasa por la misma
+// logica que la carga manual (INSERT en resultados + calculo de
+// ganadores), nunca se salta ese paso.
+// ------------------------------------------------------------
+router.post('/candidatos/:id/confirmar', requireAdmin, (req, res) => {
+  const candidato = db.prepare(`SELECT * FROM resultados_candidatos WHERE id = ?`).get(req.params.id);
+  if (!candidato) return res.status(404).json({ error: 'Candidato no encontrado' });
+  if (candidato.estado !== 'pendiente_confirmacion' || !candidato.animalito_id) {
+    return res.status(409).json({ error: 'Este candidato no tiene un animalito para confirmar' });
+  }
+
+  const existente = db.prepare(`SELECT id FROM resultados WHERE sorteo_id = ? AND fecha = ?`).get(candidato.sorteo_id, candidato.fecha);
+  if (existente) {
+    return res.status(409).json({ error: 'Ya existe un resultado cargado para este sorteo y fecha' });
+  }
+
+  const r = db.prepare(
+    `INSERT INTO resultados (sorteo_id, animalito_id, fecha, confirmado_por, fuente) VALUES (?, ?, ?, ?, ?)`
+  ).run(candidato.sorteo_id, candidato.animalito_id, candidato.fecha, req.user.id, 'auto_confirmado');
+
+  actualizarEstadoTickets(candidato.sorteo_id, candidato.fecha);
+
+  db.prepare(`UPDATE resultados_candidatos SET estado = 'confirmado', actualizado_en = datetime('now') WHERE id = ?`).run(candidato.id);
+
+  res.json({ mensaje: 'Resultado confirmado', resultado_id: r.lastInsertRowid });
+});
+
+// ------------------------------------------------------------
+// POST /resultados/candidatos/:id/descartar  (solo admin)
+// El admin marca el hallazgo automatico como incorrecto. El
+// sorteo queda disponible para carga manual normal.
+// ------------------------------------------------------------
+router.post('/candidatos/:id/descartar', requireAdmin, (req, res) => {
+  const candidato = db.prepare(`SELECT * FROM resultados_candidatos WHERE id = ?`).get(req.params.id);
+  if (!candidato) return res.status(404).json({ error: 'Candidato no encontrado' });
+
+  db.prepare(`UPDATE resultados_candidatos SET estado = 'descartado', actualizado_en = datetime('now') WHERE id = ?`).run(candidato.id);
+  res.json({ mensaje: 'Candidato descartado' });
 });
 
 function actualizarEstadoTickets(sorteoId, fecha) {

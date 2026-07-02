@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
-import { getCatalogoLoterias, getResultadosFecha, cargarResultado } from '../api/cliente';
+import {
+  getCatalogoLoterias, getResultadosFecha, cargarResultado,
+  getCandidatosResultados, confirmarCandidato, descartarCandidato,
+} from '../api/cliente';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import { hora12 } from '../utils/formato';
 
@@ -24,17 +27,22 @@ export default function Resultados() {
   const [exito, setExito] = useState('');
   const [fecha, setFecha] = useState(TODAY);
 
+  const [candidatos, setCandidatos] = useState([]);
+  const [procesandoCandidato, setProcesandoCandidato] = useState(null);
+
   async function cargar() {
     setLoading(true);
     try {
-      const [cat, res] = await Promise.all([
+      const [cat, res, cand] = await Promise.all([
         getCatalogoLoterias(),
         getResultadosFecha(fecha),
+        getCandidatosResultados(fecha),
       ]);
       setCatalogo(cat);
       const map = {};
       for (const r of res) map[r.sorteo_id] = r;
       setResultados(map);
+      setCandidatos(cand);
     } catch (err) {
       setError('Error al cargar datos: ' + err.message);
     } finally {
@@ -43,6 +51,34 @@ export default function Resultados() {
   }
 
   useEffect(() => { cargar(); }, [fecha]);
+
+  async function handleConfirmarCandidato(c) {
+    setProcesandoCandidato(c.id);
+    setError('');
+    try {
+      await confirmarCandidato(c.id);
+      setExito(`Resultado confirmado: ${c.sorteo_hora} → ${c.animalito_nombre}`);
+      await cargar();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProcesandoCandidato(null);
+    }
+  }
+
+  async function handleDescartarCandidato(c) {
+    if (!confirm('¿Descartar este hallazgo automático? Podrás cargar el resultado manualmente.')) return;
+    setProcesandoCandidato(c.id);
+    setError('');
+    try {
+      await descartarCandidato(c.id);
+      await cargar();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProcesandoCandidato(null);
+    }
+  }
 
   async function handleCargar() {
     if (!sorteoSelec || !animalito) return;
@@ -89,6 +125,46 @@ export default function Resultados() {
 
       {exito && <div className="alert alert-success">{exito}</div>}
       {error && <div className="alert alert-danger">{error}</div>}
+
+      {candidatos.length > 0 && (
+        <div className="card" style={{ border: '2px solid var(--warning)' }}>
+          <h2>🤖 Resultados automáticos por revisar</h2>
+          {candidatos.map(c => (
+            <div key={c.id} className="flex justify-between align-center" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <span className="bold">{c.loteria_nombre} — {hora12(c.sorteo_hora)}</span>
+                {c.estado === 'pendiente_confirmacion' ? (
+                  <span className="badge badge-warning" style={{ marginLeft: 8 }}>
+                    {EMOJI_MAP[c.animalito_nombre] || '🐾'} {c.animalito_nombre} ({c.animalito_numero}) — encontrado automáticamente
+                  </span>
+                ) : (
+                  <span className="badge badge-danger" style={{ marginLeft: 8 }}>
+                    Sin resultado tras {c.intentos} intentos — cargar manualmente abajo
+                  </span>
+                )}
+              </div>
+              {c.estado === 'pendiente_confirmacion' && (
+                <div className="flex gap-8">
+                  <button
+                    className="btn btn-success btn-sm btn-inline"
+                    disabled={procesandoCandidato === c.id}
+                    onClick={() => handleConfirmarCandidato(c)}
+                  >
+                    ✓ Confirmar
+                  </button>
+                  <button
+                    className="btn btn-outline btn-sm btn-inline"
+                    disabled={procesandoCandidato === c.id}
+                    onClick={() => handleDescartarCandidato(c)}
+                  >
+                    Descartar
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {sorteoSelec && (
         <div className="dialog-overlay">
