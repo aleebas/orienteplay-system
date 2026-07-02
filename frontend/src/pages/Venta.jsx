@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV } from '../api/cliente';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
@@ -23,10 +23,12 @@ const normNum = s => s.replace(/^0+/, '') || s;
 export default function Venta() {
   const { auth, caja } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const comprobanteRef = useRef(null);
   const nuevaVentaRef = useRef(null);
   const inputNumeroRef = useRef(null);
   const montoRefs = useRef({});
+  const repetirAplicadoRef = useRef(false);
 
   const [catalogo, setCatalogo] = useState([]);
   const [loadingCatalogo, setLoadingCatalogo] = useState(true);
@@ -37,6 +39,16 @@ export default function Venta() {
   const [loteria, setLoteria] = useState(null);
   const [sorteo, setSorteo] = useState(null);
   const [modo, setModo] = useState(null);
+
+  // Selección múltiple de horarios: marcar varios sorteos de la misma
+  // lotería para replicar la misma jugada en todos. Con multiHorario en
+  // false (default) el flujo de un solo horario es exactamente el de
+  // siempre -- esto es puramente aditivo.
+  const [multiHorario, setMultiHorario] = useState(false);
+  const [horariosSelec, setHorariosSelec] = useState([]);
+  // Aplicar la misma jugada armada a otra lotería, sin rehacer la
+  // selección de animalito/monto. null = panel cerrado.
+  const [repetirOtraLoteria, setRepetirOtraLoteria] = useState(null);
 
   // Selección multi-directo: {id: {animalito, monto}}
   const [selecMulti, setSelecMulti] = useState({});
@@ -79,6 +91,47 @@ export default function Venta() {
     getTasaBCV().then(r => setTasaBCV(r.tasa)).catch(() => {});
   }, []);
 
+  // ── Prefill "Repetir jugada" desde Tickets ────────────────
+  // Precarga lotería/modo/animalito(s)/monto de un ticket viejo y deja
+  // al usuario directo en el selector de horarios (multiHorario) para
+  // que solo elija las próximas horas y confirme.
+  useEffect(() => {
+    const repetir = location.state?.repetir;
+    if (!repetir || repetirAplicadoRef.current || catalogo.length === 0) return;
+    repetirAplicadoRef.current = true;
+
+    const lot = catalogo.find(l => l.id === repetir.loteria_id);
+    if (!lot) {
+      setError('La lotería de este ticket ya no está disponible');
+      return;
+    }
+    const modoObj = lot.modos_juego.find(m => m.slug === repetir.modo_slug);
+    if (!modoObj) {
+      setError(`${lot.nombre} ya no tiene el modo de juego de esta jugada`);
+      return;
+    }
+    const resueltos = repetir.animalitos
+      .map(x => lot.animalitos.find(a => a.numero === x.numero))
+      .filter(Boolean);
+    if (resueltos.length !== repetir.animalitos.length) {
+      setError('No se pudieron reconocer todos los animalitos de ese ticket');
+      return;
+    }
+
+    setLoteria(lot);
+    setModo(modoObj);
+    setModoSkipped(modoObj.slug === 'directo');
+    if (modoObj.slug === 'directo') {
+      setSelecMulti(Object.fromEntries(resueltos.map(a => [a.id, { animalito: a, monto: String(repetir.monto) }])));
+    } else {
+      setAnimTripleta(resueltos);
+      setMontoTripleta(String(repetir.monto));
+    }
+    setMultiHorario(true);
+    setStep(1);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [catalogo, location.pathname, location.state, navigate]);
+
   // ── Focus "Nueva venta" al mostrar comprobante ────────────
   useEffect(() => {
     if (ventaConfirmada) nuevaVentaRef.current?.focus();
@@ -88,11 +141,13 @@ export default function Venta() {
   function resetJugada() {
     setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
     setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
+    setRepetirOtraLoteria(null);
   }
 
   function resetParaNuevaLoteria() {
     setStep(0); setModoSkipped(false);
     setLoteria(null); setSorteo(null); setModo(null);
+    setMultiHorario(false); setHorariosSelec([]);
     resetJugada();
   }
 
@@ -100,6 +155,7 @@ export default function Venta() {
     setVentaConfirmada(null);
     setStep(0); setModoSkipped(false);
     setLoteria(null); setSorteo(null); setModo(null);
+    setMultiHorario(false); setHorariosSelec([]); setRepetirOtraLoteria(null);
     setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
     setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
   }, []);
@@ -130,7 +186,7 @@ export default function Venta() {
   }
 
   // ── Selección de sorteo (auto-selecciona modo directo) ────
-  function selecSorteo(s) {
+  function avanzarDesdeSorteo(s) {
     setSorteo(s); resetJugada();
     const directo = loteria?.modos_juego?.find(m => m.slug === 'directo');
     if (directo) {
@@ -138,6 +194,40 @@ export default function Venta() {
     } else {
       setModoSkipped(false); setStep(2);
     }
+  }
+
+  function selecSorteo(s) {
+    avanzarDesdeSorteo(s);
+  }
+
+  // ── Selección múltiple de horarios (feature: repetir jugada) ──
+  function toggleMultiHorario() {
+    setMultiHorario(prev => !prev);
+    setHorariosSelec([]);
+  }
+
+  function toggleHorarioMulti(s) {
+    setHorariosSelec(prev => {
+      const idx = prev.findIndex(h => h.id === s.id);
+      if (idx !== -1) return prev.filter((_, i) => i !== idx);
+      return [...prev, s];
+    });
+  }
+
+  function continuarConHorarios() {
+    if (horariosSelec.length === 0) return;
+    const representativo = horariosSelec[0];
+    // Si ya hay una jugada armada de antes (viene de "Repetir jugada"
+    // desde Tickets: modo + animalito(s) + monto ya precargados), no
+    // pisarla con el reset/auto-deteccion de modo de avanzarDesdeSorteo
+    // -- solo fijar el sorteo y saltar directo al paso de la jugada.
+    const hayJugadaArmada = modo && (Object.keys(selecMulti).length > 0 || animTripleta.length > 0);
+    if (hayJugadaArmada) {
+      setSorteo(representativo);
+      setStep(3);
+      return;
+    }
+    avanzarDesdeSorteo(representativo);
   }
 
   function selecModo(m) {
@@ -177,55 +267,83 @@ export default function Venta() {
     setTimeout(() => montoRefs.current[anim.id]?.focus(), 50);
   }
 
-  // ── Agregar jugadas multi-directo ─────────────────────────
-  async function handleAgregarDirecto() {
-    const items = Object.values(selecMulti).filter(x => parseFloat(x.monto) > 0);
-    if (items.length === 0) { setError('Ingresa monto para al menos un animalito'); return; }
+  // ── Fan-out compartido: sorteos × jugadasBase → carrito ───
+  // jugadasBase: [{ animalito_ids, monto, _animalitos }]. Se usa tanto
+  // para el flujo normal (un solo sorteo activo) como para varios
+  // horarios/otra lotería -- con un solo sorteo produce exactamente el
+  // mismo resultado que antes.
+  async function agregarJugadasAlCarrito({ loteriaObj, modoObj, sorteos, jugadasBase, onDone }) {
+    if (!sorteos || sorteos.length === 0) { setError('Selecciona al menos un horario'); return; }
+    if (!jugadasBase || jugadasBase.length === 0) return;
     setError(''); setAlertas([]); setLoadingAgregar(true);
 
     const hoy = TODAY();
-    const jugadasVal = items.map(x => ({
-      sorteo_id: sorteo.id,
-      modo_juego_id: modo.id,
-      animalito_ids: [x.animalito.id],
-      monto: parseFloat(x.monto),
-      fecha_sorteo: hoy,
-    }));
+    const combos = [];
+    for (const s of sorteos) {
+      for (const base of jugadasBase) {
+        combos.push({
+          sorteo_id: s.id, modo_juego_id: modoObj.id,
+          animalito_ids: base.animalito_ids, monto: base.monto, fecha_sorteo: hoy,
+          _loteria_nombre: loteriaObj.nombre, _sorteo_hora: s.hora,
+          _modo_nombre: modoObj.nombre, _animalitos: base._animalitos, _multiplicador: modoObj.multiplicador,
+        });
+      }
+    }
+
+    const etiqueta = c => `${c._loteria_nombre} ${hora12(c._sorteo_hora)} (${c._animalitos.map(a => a.nombre).join('+')})`;
 
     try {
-      const val = await validarJugadas(jugadasVal);
+      const val = await validarJugadas(combos.map(({ sorteo_id, modo_juego_id, animalito_ids, monto, fecha_sorteo }) =>
+        ({ sorteo_id, modo_juego_id, animalito_ids, monto, fecha_sorteo })
+      ));
 
-      const bloqueada = val.resultados.find(r => !r.ok && r.bloqueadoPorLimite);
-      if (bloqueada) { setError(bloqueada.error || 'Venta bloqueada por límite'); setLoadingAgregar(false); return; }
+      const bloqueadaIdx = val.resultados.findIndex(r => !r.ok && r.bloqueadoPorLimite);
+      if (bloqueadaIdx !== -1) {
+        setError(`${etiqueta(combos[bloqueadaIdx])}: ${val.resultados[bloqueadaIdx].error || 'Venta bloqueada por límite'}`);
+        setLoadingAgregar(false); return;
+      }
 
-      const conError = val.resultados.find(r => !r.ok);
-      if (conError) { setError(conError.error || 'Jugada no válida'); setLoadingAgregar(false); return; }
+      const conErrorIdx = val.resultados.findIndex(r => !r.ok);
+      if (conErrorIdx !== -1) {
+        setError(`${etiqueta(combos[conErrorIdx])}: ${val.resultados[conErrorIdx].error || 'Jugada no válida'}`);
+        setLoadingAgregar(false); return;
+      }
 
       const nuevasAlertas = [];
       val.resultados.forEach((r, idx) => {
         const rev = (r.revisiones || []).filter(rv => rv.motivo && !rv.bloqueado);
         if (rev.length > 0) {
-          nuevasAlertas.push(`⚠️ ${items[idx].animalito.nombre} al ${rev[0].porcentaje_usado}% del cupo`);
+          nuevasAlertas.push(`⚠️ ${etiqueta(combos[idx])} al ${rev[0].porcentaje_usado}% del cupo`);
         }
       });
       if (nuevasAlertas.length > 0) setAlertas(nuevasAlertas);
 
-      const nuevas = items.map(x => ({
-        _key: Date.now() + Math.random(),
-        sorteo_id: sorteo.id, modo_juego_id: modo.id,
-        animalito_ids: [x.animalito.id], monto: parseFloat(x.monto), fecha_sorteo: hoy,
-        _loteria_nombre: loteria.nombre, _sorteo_hora: sorteo.hora,
-        _modo_nombre: modo.nombre, _animalitos: [x.animalito], _multiplicador: modo.multiplicador,
-      }));
-
+      const nuevas = combos.map(c => ({ ...c, _key: Date.now() + Math.random() }));
       setCarrito(prev => [...prev, ...nuevas]);
-      setSelecMulti({});
-      setTimeout(() => inputNumeroRef.current?.focus(), 50);
+      onDone?.();
     } catch (err) {
       setError(err.message);
     } finally {
       setLoadingAgregar(false);
     }
+  }
+
+  // ── Agregar jugadas multi-directo ─────────────────────────
+  async function handleAgregarDirecto() {
+    const items = Object.values(selecMulti).filter(x => parseFloat(x.monto) > 0);
+    if (items.length === 0) { setError('Ingresa monto para al menos un animalito'); return; }
+
+    const jugadasBase = items.map(x => ({
+      animalito_ids: [x.animalito.id], monto: parseFloat(x.monto), _animalitos: [x.animalito],
+    }));
+
+    await agregarJugadasAlCarrito({
+      loteriaObj: loteria, modoObj: modo, sorteos: sorteosActivos, jugadasBase,
+      onDone: () => {
+        setSelecMulti({});
+        setTimeout(() => inputNumeroRef.current?.focus(), 50);
+      },
+    });
   }
 
   function toggleAnimTripleta(a) {
@@ -240,37 +358,63 @@ export default function Venta() {
   async function handleAgregarTripleta() {
     if (animTripleta.length < 3) { setError('Selecciona 3 animalitos'); return; }
     if (!montoTripleta || parseFloat(montoTripleta) <= 0) { setError('Ingresa el monto'); return; }
-    setError(''); setAlertas([]); setLoadingAgregar(true);
 
-    const hoy = TODAY();
-    const jugada = {
-      sorteo_id: sorteo.id, modo_juego_id: modo.id,
+    const jugadasBase = [{
       animalito_ids: animTripleta.map(a => a.id),
-      monto: parseFloat(montoTripleta), fecha_sorteo: hoy,
-    };
+      monto: parseFloat(montoTripleta),
+      _animalitos: [...animTripleta],
+    }];
 
-    try {
-      const val = await validarJugadas([jugada]);
-      const res = val.resultados[0];
-      if (!res.ok) { setError(res.error || 'Jugada no válida'); setLoadingAgregar(false); return; }
+    await agregarJugadasAlCarrito({
+      loteriaObj: loteria, modoObj: modo, sorteos: sorteosActivos, jugadasBase,
+      onDone: () => resetJugada(),
+    });
+  }
 
-      const revAlertas = (res.revisiones || []).filter(r => r.motivo && !r.bloqueado);
-      if (revAlertas.length > 0) setAlertas(revAlertas.map(r => `⚠️ ${r.motivo}`));
+  // ── Aplicar la misma jugada armada a otra lotería ─────────
+  // Los animalito_ids y modo_juego_id son propios de cada lotería, asi
+  // que se resuelven de nuevo por numero/slug contra la lotería destino
+  // en vez de reusar los ids de la lotería activa.
+  async function handleAgregarEnOtraLoteria() {
+    const destino = repetirOtraLoteria?.loteria;
+    const horarios = repetirOtraLoteria?.horariosSelec || [];
+    if (!destino || horarios.length === 0) return;
 
-      setCarrito(prev => [...prev, {
-        _key: Date.now(),
-        sorteo_id: sorteo.id, modo_juego_id: modo.id,
-        animalito_ids: animTripleta.map(a => a.id),
-        monto: parseFloat(montoTripleta), fecha_sorteo: hoy,
-        _loteria_nombre: loteria.nombre, _sorteo_hora: sorteo.hora,
-        _modo_nombre: modo.nombre, _animalitos: [...animTripleta], _multiplicador: modo.multiplicador,
-      }]);
-      resetJugada();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoadingAgregar(false);
+    const modoObj = destino.modos_juego.find(m => m.slug === modo.slug);
+    if (!modoObj) { setError(`${destino.nombre} no tiene el modo "${modo.nombre}"`); return; }
+
+    let jugadasBase;
+    let avisoNoResueltos = null;
+
+    if (esDirecto) {
+      const items = Object.values(selecMulti).filter(x => parseFloat(x.monto) > 0);
+      const resueltos = items.map(x => {
+        const encontrado = destino.animalitos.find(a => a.numero === x.animalito.numero);
+        return encontrado ? { animalito: encontrado, monto: parseFloat(x.monto) } : null;
+      });
+      const faltantes = items.filter((_, i) => !resueltos[i]);
+      if (faltantes.length > 0) {
+        avisoNoResueltos = `${destino.nombre} no tiene ${faltantes.map(x => x.animalito.nombre).join(', ')} -- se omitió`;
+      }
+      const validos = resueltos.filter(Boolean);
+      if (validos.length === 0) { setError(avisoNoResueltos || 'Ningún animalito existe en esa lotería'); return; }
+      jugadasBase = validos.map(x => ({ animalito_ids: [x.animalito.id], monto: x.monto, _animalitos: [x.animalito] }));
+    } else {
+      const resueltos = animTripleta.map(a => destino.animalitos.find(x => x.numero === a.numero)).filter(Boolean);
+      if (resueltos.length !== animTripleta.length) {
+        setError(`${destino.nombre} no tiene todos los animalitos de esta tripleta`);
+        return;
+      }
+      jugadasBase = [{ animalito_ids: resueltos.map(a => a.id), monto: parseFloat(montoTripleta), _animalitos: resueltos }];
     }
+
+    await agregarJugadasAlCarrito({
+      loteriaObj: destino, modoObj, sorteos: horarios, jugadasBase,
+      onDone: () => {
+        setRepetirOtraLoteria(null);
+        if (avisoNoResueltos) setAlertas(prev => [...prev, avisoNoResueltos]);
+      },
+    });
   }
 
   async function confirmarVenta(forzar = false) {
@@ -349,6 +493,7 @@ export default function Venta() {
   const esTripleta = modo && !esDirecto;
   const totalSelecMulti = Object.values(selecMulti).reduce((s, x) => s + (parseFloat(x.monto) || 0), 0);
   const totalCarrito = carrito.reduce((s, i) => s + i.monto, 0);
+  const sorteosActivos = multiHorario ? horariosSelec : (sorteo ? [sorteo] : []);
   const stepperActivo = step === 0 ? 0 : step === 1 ? 1 : 2;
   const STEPPER = ['Lotería', 'Sorteo', 'Jugada'];
 
@@ -426,10 +571,12 @@ export default function Venta() {
               <div
                 className="flex align-center gap-8 mb-12"
                 style={{ fontSize: '0.85rem', cursor: 'pointer', color: 'var(--primary)', flexWrap: 'wrap' }}
-                onClick={() => { setStep(0); resetJugada(); setSorteo(null); setModo(null); }}
+                onClick={() => { setStep(0); resetJugada(); setSorteo(null); setModo(null); setMultiHorario(false); setHorariosSelec([]); }}
               >
                 <span>🎰 <strong>{loteria.nombre}</strong></span>
-                {sorteo && <><span className="text-muted">·</span><span>⏰ {hora12(sorteo.hora)}</span></>}
+                {sorteo && (
+                  <><span className="text-muted">·</span><span>⏰ {sorteosActivos.length > 1 ? `${sorteosActivos.length} horarios` : hora12(sorteo.hora)}</span></>
+                )}
                 {modo && (
                   <><span className="text-muted">·</span><span>🎲 {modo.nombre}</span>
                     {step >= 3 && (
@@ -450,15 +597,22 @@ export default function Venta() {
             {step === 1 && (
               <>
                 <h3>Selecciona el Sorteo</h3>
+                <label className="flex align-center gap-8 mb-12" style={{ fontSize: '0.85rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={multiHorario} onChange={toggleMultiHorario} />
+                  🕐 Elegir varios horarios
+                </label>
                 <div className="sorteo-grid">
                   {loteria.sorteos.map(s => {
                     const abierto = sorteoAbierto(s);
+                    const seleccionado = multiHorario
+                      ? horariosSelec.some(h => h.id === s.id)
+                      : sorteo?.id === s.id;
                     return (
                       <button
                         key={s.id}
-                        className={`sorteo-btn${sorteo?.id === s.id ? ' selected' : ''}`}
+                        className={`sorteo-btn${seleccionado ? ' selected' : ''}`}
                         disabled={!abierto}
-                        onClick={() => selecSorteo(s)}
+                        onClick={() => multiHorario ? toggleHorarioMulti(s) : selecSorteo(s)}
                       >
                         {hora12(s.hora)}
                         {!abierto && <span className="sorteo-cerrado">Cerrado</span>}
@@ -466,6 +620,15 @@ export default function Venta() {
                     );
                   })}
                 </div>
+                {multiHorario && (
+                  <button
+                    className="btn btn-primary mt-8"
+                    disabled={horariosSelec.length === 0}
+                    onClick={continuarConHorarios}
+                  >
+                    Continuar con {horariosSelec.length} horario{horariosSelec.length !== 1 ? 's' : ''} →
+                  </button>
+                )}
               </>
             )}
 
@@ -608,6 +771,73 @@ export default function Venta() {
                       {loadingAgregar ? 'Validando...' : '+ Agregar tripleta al carrito'}
                     </button>
                   </>
+                )}
+
+                {/* ─ Repetir esta misma jugada en otra lotería ─ */}
+                {((esDirecto && Object.keys(selecMulti).length > 0) || (esTripleta && animTripleta.length === 3 && montoTripleta)) && (
+                  <div className="mt-12">
+                    {!repetirOtraLoteria ? (
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={() => setRepetirOtraLoteria({ loteria: null, horariosSelec: [] })}
+                      >
+                        + Aplicar esta jugada a otra lotería
+                      </button>
+                    ) : (
+                      <div className="card" style={{ marginTop: 8 }}>
+                        <div className="flex justify-between align-center mb-8">
+                          <h3 style={{ margin: 0, fontSize: '0.9rem' }}>Aplicar en otra lotería</h3>
+                          <button className="btn btn-outline btn-sm btn-inline" onClick={() => setRepetirOtraLoteria(null)}>✕</button>
+                        </div>
+                        {!repetirOtraLoteria.loteria ? (
+                          <div className="loteria-grid">
+                            {catalogo.filter(l => l.id !== loteria.id).map(lot => (
+                              <div
+                                key={lot.id}
+                                className="loteria-card"
+                                onClick={() => setRepetirOtraLoteria(r => ({ ...r, loteria: lot }))}
+                              >
+                                <div className="loteria-name">{lot.nombre}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-muted text-sm mb-8">🎰 {repetirOtraLoteria.loteria.nombre}</p>
+                            <div className="sorteo-grid">
+                              {repetirOtraLoteria.loteria.sorteos.map(s => {
+                                const abierto = sorteoAbierto(s);
+                                const seleccionado = repetirOtraLoteria.horariosSelec.some(h => h.id === s.id);
+                                return (
+                                  <button
+                                    key={s.id}
+                                    className={`sorteo-btn${seleccionado ? ' selected' : ''}`}
+                                    disabled={!abierto}
+                                    onClick={() => setRepetirOtraLoteria(r => ({
+                                      ...r,
+                                      horariosSelec: seleccionado
+                                        ? r.horariosSelec.filter(h => h.id !== s.id)
+                                        : [...r.horariosSelec, s],
+                                    }))}
+                                  >
+                                    {hora12(s.hora)}
+                                    {!abierto && <span className="sorteo-cerrado">Cerrado</span>}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <button
+                              className="btn btn-primary btn-sm mt-8"
+                              disabled={loadingAgregar || repetirOtraLoteria.horariosSelec.length === 0}
+                              onClick={handleAgregarEnOtraLoteria}
+                            >
+                              {loadingAgregar ? 'Validando...' : '+ Agregar al carrito'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </>
             )}

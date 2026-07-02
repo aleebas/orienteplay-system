@@ -3,6 +3,7 @@ import {
   getCatalogoLoterias, getResultadosFecha, cargarResultado,
   getCandidatosResultados, confirmarCandidato, descartarCandidato,
 } from '../api/cliente';
+import { useAuth } from '../context/AuthContext';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import { hora12 } from '../utils/formato';
 
@@ -17,6 +18,9 @@ function sorteoYaPaso(hora) {
 }
 
 export default function Resultados() {
+  const { auth } = useAuth();
+  const puedeConfirmar = auth?.user?.rol === 'admin' || !!auth?.user?.puede_confirmar_resultados;
+
   const [catalogo, setCatalogo] = useState([]);
   const [resultados, setResultados] = useState({});
   const [loading, setLoading] = useState(true);
@@ -171,7 +175,7 @@ export default function Resultados() {
                   </span>
                 )}
               </div>
-              {c.estado === 'pendiente_confirmacion' && (
+              {c.estado === 'pendiente_confirmacion' && puedeConfirmar && (
                 <div className="flex gap-8">
                   <button
                     className="btn btn-success btn-sm btn-inline"

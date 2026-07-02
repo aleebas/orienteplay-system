@@ -32,7 +32,8 @@ router.post('/login', (req, res) => {
     token,
     user: {
       id: user.id, nombre: user.nombre, rol: user.rol,
-      agencia_id: user.agencia_id, agencia_nombre: user.agencia_nombre
+      agencia_id: user.agencia_id, agencia_nombre: user.agencia_nombre,
+      puede_confirmar_resultados: !!user.puede_confirmar_resultados,
     }
   });
 });

@@ -43,11 +43,11 @@ export default function Reportes() {
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
-  const [formUsuario, setFormUsuario] = useState({ nombre: '', usuario: '', clave: '', rol: 'vendedor', comision_porcentaje: 14 });
+  const [formUsuario, setFormUsuario] = useState({ nombre: '', usuario: '', clave: '', rol: 'vendedor', comision_porcentaje: 14, puede_confirmar_resultados: false });
   const [savingUsuario, setSavingUsuario] = useState(false);
   const [usuarioMsg, setUsuarioMsg] = useState('');
   const [usuarioEditando, setUsuarioEditando] = useState(null);
-  const [formEditar, setFormEditar] = useState({ nombre: '', rol: 'vendedor', clave: '', comision_porcentaje: 14 });
+  const [formEditar, setFormEditar] = useState({ nombre: '', rol: 'vendedor', clave: '', comision_porcentaje: 14, puede_confirmar_resultados: false });
   const [savingEditar, setSavingEditar] = useState(false);
   const [editarMsg, setEditarMsg] = useState('');
 
@@ -141,7 +141,7 @@ export default function Reportes() {
     try {
       await crearUsuario(formUsuario);
       setUsuarioMsg('Usuario creado');
-      setFormUsuario({ nombre: '', usuario: '', clave: '', rol: 'vendedor', comision_porcentaje: 14 });
+      setFormUsuario({ nombre: '', usuario: '', clave: '', rol: 'vendedor', comision_porcentaje: 14, puede_confirmar_resultados: false });
       cargarUsuarios();
     } catch (err) {
       setUsuarioMsg('Error: ' + err.message);
@@ -152,7 +152,7 @@ export default function Reportes() {
 
   function abrirEditar(u) {
     setUsuarioEditando(u);
-    setFormEditar({ nombre: u.nombre, rol: u.rol, clave: '', comision_porcentaje: u.comision_porcentaje ?? 14 });
+    setFormEditar({ nombre: u.nombre, rol: u.rol, clave: '', comision_porcentaje: u.comision_porcentaje ?? 14, puede_confirmar_resultados: !!u.puede_confirmar_resultados });
     setEditarMsg('');
   }
 
@@ -165,6 +165,7 @@ export default function Reportes() {
         nombre: formEditar.nombre,
         rol: formEditar.rol,
         comision_porcentaje: formEditar.comision_porcentaje,
+        puede_confirmar_resultados: formEditar.puede_confirmar_resultados,
       };
       if (formEditar.clave) payload.clave = formEditar.clave;
       await editarUsuario(usuarioEditando.id, payload);
@@ -493,6 +494,16 @@ export default function Reportes() {
                   placeholder="14"
                 />
               </div>
+              <div className="field">
+                <label className="flex align-center gap-8" style={{ cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={formUsuario.puede_confirmar_resultados}
+                    onChange={e => setFormUsuario(f => ({ ...f, puede_confirmar_resultados: e.target.checked }))}
+                  />
+                  Puede confirmar resultados automáticos
+                </label>
+              </div>
               <button
                 type="submit"
                 className="btn btn-primary"
@@ -590,6 +601,16 @@ export default function Reportes() {
                       onChange={e => setFormEditar(f => ({ ...f, clave: e.target.value }))}
                       placeholder="••••••••"
                     />
+                  </div>
+                  <div className="field">
+                    <label className="flex align-center gap-8" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={formEditar.puede_confirmar_resultados}
+                        onChange={e => setFormEditar(f => ({ ...f, puede_confirmar_resultados: e.target.checked }))}
+                      />
+                      Puede confirmar resultados automáticos
+                    </label>
                   </div>
                   <div className="dialog-actions">
                     <button type="button" className="btn btn-outline" onClick={() => setUsuarioEditando(null)}>

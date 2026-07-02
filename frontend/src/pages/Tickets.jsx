@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import { hora12, fmt, horaVenezuela } from '../utils/formato';
@@ -39,6 +40,7 @@ function badgeClase(estado) {
 }
 
 export default function Tickets() {
+  const navigate = useNavigate();
   const [vista, setVista] = useState('tickets');
 
   const [lista, setLista] = useState([]);
@@ -144,6 +146,20 @@ export default function Tickets() {
     } finally {
       setLoadingDetalle(false);
     }
+  }
+
+  function handleRepetirJugada() {
+    const { jugada, animalitos } = ticketDetalle;
+    navigate('/venta', {
+      state: {
+        repetir: {
+          loteria_id: animalitos[0].loteria_id,
+          modo_slug: jugada.modo_slug,
+          monto: jugada.monto,
+          animalitos: animalitos.map(a => ({ numero: a.numero, nombre: a.nombre })),
+        },
+      },
+    });
   }
 
   return (
@@ -371,6 +387,14 @@ export default function Tickets() {
                 {ticketDetalle.ticket.estado === 'anulado' && (
                   <div className="alert alert-warning">Este ticket fue anulado.</div>
                 )}
+
+                <button
+                  className="btn btn-outline"
+                  style={{ width: '100%', marginTop: 12 }}
+                  onClick={handleRepetirJugada}
+                >
+                  🔁 Repetir jugada
+                </button>
               </>
             )}
           </div>

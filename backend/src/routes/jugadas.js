@@ -385,7 +385,7 @@ router.get('/ticket/:codigo', (req, res) => {
 
   const jugada = db.prepare(
     `SELECT j.*, s.nombre AS sorteo_nombre, s.hora AS sorteo_hora, l.nombre AS loteria_nombre,
-            m.nombre AS modo_nombre, m.multiplicador, u.nombre AS vendedor_nombre
+            m.nombre AS modo_nombre, m.slug AS modo_slug, m.multiplicador, u.nombre AS vendedor_nombre
      FROM jugadas j
      JOIN sorteos s ON s.id = j.sorteo_id
      JOIN loterias l ON l.id = s.loteria_id

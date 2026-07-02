@@ -23,6 +23,7 @@ const migraciones = [
   `ALTER TABLE jugadas ADD COLUMN metodo_pago TEXT NOT NULL DEFAULT 'efectivo'`,
   `ALTER TABLE usuarios ADD COLUMN comision_porcentaje REAL NOT NULL DEFAULT 14`,
   `ALTER TABLE cajas ADD COLUMN fondo_banco REAL NOT NULL DEFAULT 0`,
+  `ALTER TABLE usuarios ADD COLUMN puede_confirmar_resultados INTEGER NOT NULL DEFAULT 0`,
 ];
 for (const sql of migraciones) {
   try {

@@ -8,7 +8,7 @@ router.use(requireAuth, requireAdmin);
 
 router.get('/', (req, res) => {
   const usuarios = db.prepare(
-    `SELECT id, nombre, usuario, rol, comision_porcentaje, activo, creado_en FROM usuarios ORDER BY creado_en DESC`
+    `SELECT id, nombre, usuario, rol, comision_porcentaje, puede_confirmar_resultados, activo, creado_en FROM usuarios ORDER BY creado_en DESC`
   ).all();
   res.json(usuarios);
 });
@@ -16,6 +16,7 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   const { nombre, usuario, clave, rol } = req.body;
   const comisionPorcentaje = req.body.comision_porcentaje != null ? parseFloat(req.body.comision_porcentaje) : 14;
+  const puedeConfirmarResultados = req.body.puede_confirmar_resultados ? 1 : 0;
   if (!nombre || !usuario || !clave || !rol) {
     return res.status(400).json({ error: 'nombre, usuario, clave y rol son requeridos' });
   }
@@ -30,8 +31,8 @@ router.post('/', (req, res) => {
 
   const hash = bcrypt.hashSync(clave, 10);
   const r = db.prepare(
-    `INSERT INTO usuarios (agencia_id, nombre, usuario, password_hash, rol, comision_porcentaje) VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(req.user.agencia_id, nombre, usuario, hash, rol, comisionPorcentaje);
+    `INSERT INTO usuarios (agencia_id, nombre, usuario, password_hash, rol, comision_porcentaje, puede_confirmar_resultados) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(req.user.agencia_id, nombre, usuario, hash, rol, comisionPorcentaje, puedeConfirmarResultados);
 
   res.status(201).json({ id: r.lastInsertRowid, mensaje: 'Usuario creado' });
 });
@@ -51,11 +52,14 @@ router.patch('/:id', (req, res) => {
   const nuevaComision = req.body.comision_porcentaje != null
     ? parseFloat(req.body.comision_porcentaje)
     : actual.comision_porcentaje;
+  const nuevoPermiso = req.body.puede_confirmar_resultados != null
+    ? (req.body.puede_confirmar_resultados ? 1 : 0)
+    : actual.puede_confirmar_resultados;
   const nuevoHash = clave ? bcrypt.hashSync(clave, 10) : actual.password_hash;
 
   db.prepare(
-    `UPDATE usuarios SET nombre = ?, rol = ?, comision_porcentaje = ?, password_hash = ? WHERE id = ?`
-  ).run(nuevoNombre, nuevoRol, nuevaComision, nuevoHash, req.params.id);
+    `UPDATE usuarios SET nombre = ?, rol = ?, comision_porcentaje = ?, puede_confirmar_resultados = ?, password_hash = ? WHERE id = ?`
+  ).run(nuevoNombre, nuevoRol, nuevaComision, nuevoPermiso, nuevoHash, req.params.id);
 
   res.json({ mensaje: 'Usuario actualizado' });
 });

@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db/connection');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdminOrPermiso } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -77,7 +77,7 @@ router.get('/candidatos', (req, res) => {
 // logica que la carga manual (INSERT en resultados + calculo de
 // ganadores), nunca se salta ese paso.
 // ------------------------------------------------------------
-router.post('/candidatos/:id/confirmar', requireAdmin, (req, res) => {
+router.post('/candidatos/:id/confirmar', requireAdminOrPermiso('puede_confirmar_resultados'), (req, res) => {
   const candidato = db.prepare(`SELECT * FROM resultados_candidatos WHERE id = ?`).get(req.params.id);
   if (!candidato) return res.status(404).json({ error: 'Candidato no encontrado' });
   if (candidato.estado !== 'pendiente_confirmacion' || !candidato.animalito_id) {
@@ -105,7 +105,7 @@ router.post('/candidatos/:id/confirmar', requireAdmin, (req, res) => {
 // El admin marca el hallazgo automatico como incorrecto. El
 // sorteo queda disponible para carga manual normal.
 // ------------------------------------------------------------
-router.post('/candidatos/:id/descartar', requireAdmin, (req, res) => {
+router.post('/candidatos/:id/descartar', requireAdminOrPermiso('puede_confirmar_resultados'), (req, res) => {
   const candidato = db.prepare(`SELECT * FROM resultados_candidatos WHERE id = ?`).get(req.params.id);
   if (!candidato) return res.status(404).json({ error: 'Candidato no encontrado' });
 

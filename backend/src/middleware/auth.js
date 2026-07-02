@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const db = require('../db/connection');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'cambiar-este-secreto-en-produccion';
 
@@ -24,4 +25,24 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-module.exports = { requireAuth, requireAdmin, JWT_SECRET };
+// Columnas de permiso individuales validas para requireAdminOrPermiso.
+// Whitelist explicita para no interpolar en SQL un nombre de columna
+// que venga de fuera de este archivo.
+const PERMISO_COLUMNS = { puede_confirmar_resultados: true };
+
+// Deja pasar a un admin siempre, o a un usuario puntual que tenga el
+// permiso individual en 1. Lee la DB en cada request (no confia en el
+// JWT) para que activar/desactivar el permiso surta efecto de inmediato,
+// sin esperar a que el usuario vuelva a iniciar sesion.
+function requireAdminOrPermiso(campo) {
+  if (!PERMISO_COLUMNS[campo]) {
+    throw new Error(`requireAdminOrPermiso: permiso desconocido "${campo}"`);
+  }
+  return (req, res, next) => {
+    const row = db.prepare(`SELECT rol, ${campo} AS permiso FROM usuarios WHERE id = ?`).get(req.user.id);
+    if (row && (row.rol === 'admin' || row.permiso === 1)) return next();
+    return res.status(403).json({ error: 'No tienes permiso para esta acción' });
+  };
+}
+
+module.exports = { requireAuth, requireAdmin, requireAdminOrPermiso, JWT_SECRET };
