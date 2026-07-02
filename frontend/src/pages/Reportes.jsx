@@ -8,6 +8,8 @@ import {
   getLimites,
   guardarLimite,
   desactivarLimite,
+  getUsuarios,
+  crearUsuario,
 } from '../api/cliente';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -17,6 +19,7 @@ const fmt = (n) => `Bs. ${Number(n || 0).toLocaleString('es-VE', { minimumFracti
 export default function Reportes() {
   const { auth } = useAuth();
   const agenciaId = auth?.user?.agencia_id;
+  const esAdmin = auth?.user?.rol === 'admin';
 
   const [tab, setTab] = useState('dia');
   const [desde, setDesde] = useState(HACE7);
@@ -36,12 +39,19 @@ export default function Reportes() {
   const [savingLimite, setSavingLimite] = useState(false);
   const [limiteMsg, setLimiteMsg] = useState('');
 
+  // Usuarios
+  const [usuarios, setUsuarios] = useState([]);
+  const [formUsuario, setFormUsuario] = useState({ nombre: '', usuario: '', clave: '', rol: 'vendedor' });
+  const [savingUsuario, setSavingUsuario] = useState(false);
+  const [usuarioMsg, setUsuarioMsg] = useState('');
+
   useEffect(() => {
     cargarReportes();
   }, [desde, hasta, fechaDetalle]);
 
   useEffect(() => {
     if (tab === 'limites') cargarLimites();
+    if (tab === 'usuarios') cargarUsuarios();
   }, [tab]);
 
   async function cargarReportes() {
@@ -101,11 +111,34 @@ export default function Reportes() {
     } catch {}
   }
 
+  async function cargarUsuarios() {
+    try {
+      setUsuarios(await getUsuarios());
+    } catch {}
+  }
+
+  async function handleCrearUsuario(e) {
+    e.preventDefault();
+    setSavingUsuario(true);
+    setUsuarioMsg('');
+    try {
+      await crearUsuario(formUsuario);
+      setUsuarioMsg('Usuario creado');
+      setFormUsuario({ nombre: '', usuario: '', clave: '', rol: 'vendedor' });
+      cargarUsuarios();
+    } catch (err) {
+      setUsuarioMsg('Error: ' + err.message);
+    } finally {
+      setSavingUsuario(false);
+    }
+  }
+
   const tabs = [
     { key: 'dia', label: 'Por día' },
     { key: 'loteria', label: 'Por lotería' },
     { key: 'vendedor', label: 'Por vendedor' },
     { key: 'limites', label: 'Límites' },
+    ...(esAdmin ? [{ key: 'usuarios', label: 'Usuarios' }] : []),
   ];
 
   return (
@@ -328,6 +361,100 @@ export default function Reportes() {
                             ✕
                           </button>
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Usuarios (solo admin) */}
+      {tab === 'usuarios' && esAdmin && (
+        <>
+          <div className="card">
+            <h2>Nuevo usuario</h2>
+            {usuarioMsg && (
+              <div className={`alert ${usuarioMsg.startsWith('Error') ? 'alert-danger' : 'alert-success'}`}>
+                {usuarioMsg}
+              </div>
+            )}
+            <form onSubmit={handleCrearUsuario}>
+              <div className="field">
+                <label>Nombre</label>
+                <input
+                  type="text"
+                  value={formUsuario.nombre}
+                  onChange={e => setFormUsuario(f => ({ ...f, nombre: e.target.value }))}
+                  placeholder="Nombre completo"
+                />
+              </div>
+              <div className="field">
+                <label>Usuario</label>
+                <input
+                  type="text"
+                  value={formUsuario.usuario}
+                  onChange={e => setFormUsuario(f => ({ ...f, usuario: e.target.value }))}
+                  placeholder="usuario de acceso"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="field">
+                <label>Clave</label>
+                <input
+                  type="password"
+                  value={formUsuario.clave}
+                  onChange={e => setFormUsuario(f => ({ ...f, clave: e.target.value }))}
+                  placeholder="••••••••"
+                />
+              </div>
+              <div className="field">
+                <label>Rol</label>
+                <select value={formUsuario.rol} onChange={e => setFormUsuario(f => ({ ...f, rol: e.target.value }))}>
+                  <option value="vendedor">Vendedor</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={savingUsuario || !formUsuario.nombre || !formUsuario.usuario || !formUsuario.clave}
+              >
+                {savingUsuario ? 'Creando...' : 'Crear usuario'}
+              </button>
+            </form>
+          </div>
+
+          <div className="card">
+            <h2>Usuarios existentes</h2>
+            {usuarios.length === 0 ? (
+              <p className="text-muted text-sm">No hay usuarios.</p>
+            ) : (
+              <div className="tabla-wrap">
+                <table className="tabla">
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Usuario</th>
+                      <th>Rol</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usuarios.map(u => (
+                      <tr key={u.id}>
+                        <td>{u.nombre}</td>
+                        <td>{u.usuario}</td>
+                        <td>
+                          <span className={`badge badge-${u.rol === 'admin' ? 'info' : 'warning'}`}>
+                            {u.rol}
+                          </span>
+                        </td>
+                        <td>{u.activo ? 'Activo' : 'Inactivo'}</td>
                       </tr>
                     ))}
                   </tbody>

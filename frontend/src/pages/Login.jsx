@@ -29,14 +29,11 @@ export default function Login() {
   return (
     <div className="login-page">
       <div className="login-header">
-        <div className="logo-container">
-          <div className="logo-bg" />
-          <img
-            src="/ORIENTEPLAY_LOGO.png"
-            alt="OrientePlay"
-            style={{ height: '140px', objectFit: 'contain', position: 'relative', zIndex: 2 }}
-          />
-        </div>
+        <img
+          src="/ORIENTEPLAY_LOGO.png"
+          alt="OrientePlay"
+          style={{ height: '140px', objectFit: 'contain' }}
+        />
         <div className="login-tagline">Sistema de gestión de animalitos</div>
       </div>
 

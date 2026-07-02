@@ -228,29 +228,10 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(ellipse at bottom, #2d4a7a 0%, #1a1f3a 60%, #0d1528 100%);
+  background: linear-gradient(180deg, #0a1230 0%, #0d1e4a 50%, #0a1230 100%);
   padding: 16px;
 }
 .login-header { text-align: center; margin-bottom: 28px; }
-.logo-container {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 12px;
-  width: 200px;
-  height: 200px;
-  margin-left: auto;
-  margin-right: auto;
-}
-.logo-bg {
-  position: absolute;
-  width: 180px;
-  height: 180px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0) 100%);
-  z-index: 1;
-}
 .login-logo { font-size: 2.2rem; font-weight: 800; color: #fff; letter-spacing: -1px; line-height: 1; }
 .login-tagline { color: rgba(255,255,255,0.6); font-size: 0.85rem; margin-top: 6px; }
 .login-card {

@@ -56,6 +56,7 @@ app.use('/api/resultados', require('./routes/resultados'));
 app.use('/api/pagos', require('./routes/pagos'));
 app.use('/api/agencias', require('./routes/agencias'));
 app.use('/api/reportes', require('./routes/reportes'));
+app.use('/api/usuarios', require('./routes/usuarios'));
 
 app.get('/api/health', (req, res) => {
   const devMode = process.env.SKIP_HORARIO_CHECK === 'true';

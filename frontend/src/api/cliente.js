@@ -95,4 +95,10 @@ export const getUltimasVentas = (limite = 10) =>
 export const getLimitesUso = () =>
   req('GET', '/reportes/limites-uso');
 
+export const getUsuarios = () =>
+  req('GET', '/usuarios');
+
+export const crearUsuario = (payload) =>
+  req('POST', '/usuarios', payload);
+
 export const API = { get: (path) => req('GET', path) };
