@@ -110,7 +110,14 @@ export default function Venta() {
     try {
       await imprimirTicket(ventaConfirmada, auth?.user?.agencia_nombre);
     } catch (err) {
-      setErrorImprimir(err.message || 'No se pudo imprimir el ticket');
+      if (err.status === 503) {
+        // Sin impresora térmica USB en este servidor (entorno cloud) --
+        // usar el diálogo de impresión del navegador sobre el comprobante
+        // ya renderizado (ver @media print en index.css).
+        window.print();
+      } else {
+        setErrorImprimir(err.message || 'No se pudo imprimir el ticket');
+      }
     } finally {
       setImprimiendo(false);
     }
