@@ -20,6 +20,13 @@ function sorteoAbierto(sorteo) {
 
 const normNum = s => s.replace(/^0+/, '') || s;
 
+// Identidad estable de una combinación sorteo+modo+animalito(s), usada
+// tanto de _key de React como para poder actualizar/quitar una línea del
+// carrito en vez de duplicarla cuando se recalcula en cada cambio.
+function comboKey(sorteoId, modoId, animalitoIds) {
+  return `${sorteoId}|${modoId}|${[...animalitoIds].sort((a, b) => a - b).join(',')}`;
+}
+
 export default function Venta() {
   const { auth, caja } = useAuth();
   const navigate = useNavigate();
@@ -29,32 +36,33 @@ export default function Venta() {
   const inputNumeroRef = useRef(null);
   const montoRefs = useRef({});
   const repetirAplicadoRef = useRef(false);
+  // Se incrementa cada vez que se activa una lotería/modo (selecLoteria,
+  // seleccionarModo, aplicarRepetir). La sincronización en vivo del
+  // carrito solo toca líneas de la sesión actual -- así, si ya había
+  // líneas de una activación anterior de esa misma lotería+modo (el
+  // operador salió y volvió a entrar), no se resucitan ni se borran
+  // solas por coincidir el mismo sorteo/modo_juego_id.
+  const sesionRef = useRef(0);
 
   const [catalogo, setCatalogo] = useState([]);
   const [loadingCatalogo, setLoadingCatalogo] = useState(true);
 
-  // 0=loteria, 1=sorteo, 2=modo(manual), 3=jugada-builder
-  const [step, setStep] = useState(0);
-  const [modoSkipped, setModoSkipped] = useState(false);
   const [loteria, setLoteria] = useState(null);
-  const [sorteo, setSorteo] = useState(null);
   const [modo, setModo] = useState(null);
 
-  // Horarios marcados para replicar la misma jugada en varios sorteos a la
-  // vez. El primer horario que se toca avanza de inmediato al armado de la
-  // jugada (mismo comportamiento y velocidad que elegir un solo horario);
-  // tocar mas horarios despues solo los suma, sin repetir pasos.
+  // Horarios marcados para replicar la misma jugada en varios sorteos.
   const [horariosSelec, setHorariosSelec] = useState([]);
   // Aplicar la misma jugada armada a otra lotería, sin rehacer la
   // selección de animalito/monto. null = panel cerrado.
   const [repetirOtraLoteria, setRepetirOtraLoteria] = useState(null);
+  const [loadingOtraLoteria, setLoadingOtraLoteria] = useState(false);
 
   // Selección multi-directo: {id: {animalito, monto}}
   const [selecMulti, setSelecMulti] = useState({});
   const [inputNumero, setInputNumero] = useState('');
   const [errorNumero, setErrorNumero] = useState('');
 
-  // Selección tripleta
+  // Selección de modos con más de un animalito (tripleta y similares)
   const [animTripleta, setAnimTripleta] = useState([]);
   const [montoTripleta, setMontoTripleta] = useState('');
 
@@ -69,7 +77,6 @@ export default function Venta() {
   const [tasaBCV, setTasaBCV] = useState(null);
   const [montoUSD, setMontoUSD] = useState('');
 
-  const [loadingAgregar, setLoadingAgregar] = useState(false);
   const [loadingConfirmar, setLoadingConfirmar] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [ventaConfirmada, setVentaConfirmada] = useState(null);
@@ -99,13 +106,27 @@ export default function Venta() {
     getTasaBCV().then(r => setTasaBCV(r.tasa)).catch(() => {});
   }, []);
 
+  // ── Reset helpers ─────────────────────────────────────────
+  function resetJugada() {
+    setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
+    setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
+    setRepetirOtraLoteria(null);
+  }
+
+  const handleNuevaVenta = useCallback(() => {
+    setVentaConfirmada(null);
+    setLoteria(null); setModo(null); setHorariosSelec([]); setRepetirOtraLoteria(null);
+    setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
+    setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
+  }, []);
+
   // ── Aplicar "Repetir jugada" ───────────────────────────────
-  // Precarga lotería/modo/animalito(s)/monto de un ticket viejo y deja
-  // al usuario directo en el selector de horarios para que solo elija
-  // las próximas horas y confirme. Reusada tanto por el prefill que
-  // llega desde Tickets.jsx (navigate con location.state) como por el
-  // botón "Repetir jugada" del modal "Buscar tickets" (sin navegar,
-  // ya estamos en /venta). Devuelve true/false segun si pudo aplicarse.
+  // Precarga lotería/modo/animalito(s)/monto de un ticket viejo. Deja
+  // horariosSelec vacío a propósito -- obliga a elegir el horario, la
+  // pantalla ya muestra todo lo demás de una. Reusada tanto por el
+  // prefill que llega desde Tickets.jsx (navigate con location.state)
+  // como por el botón "Repetir jugada" del modal "Buscar tickets".
+  // Devuelve true/false segun si pudo aplicarse.
   function aplicarRepetir(repetir) {
     const lot = catalogo.find(l => l.id === repetir.loteria_id);
     if (!lot) {
@@ -125,12 +146,11 @@ export default function Venta() {
       return false;
     }
 
+    sesionRef.current += 1;
     setLoteria(lot);
-    setSorteo(null);
     setHorariosSelec([]);
     setModo(modoObj);
-    setModoSkipped(modoObj.slug === 'directo');
-    if (modoObj.slug === 'directo') {
+    if (modoObj.cantidad_animalitos === 1) {
       setSelecMulti(Object.fromEntries(resueltos.map(a => [a.id, { animalito: a, monto: String(repetir.monto) }])));
       setAnimTripleta([]); setMontoTripleta('');
     } else {
@@ -138,7 +158,6 @@ export default function Venta() {
       setMontoTripleta(String(repetir.monto));
       setSelecMulti({});
     }
-    setStep(1);
     return true;
   }
 
@@ -155,29 +174,6 @@ export default function Venta() {
   useEffect(() => {
     if (ventaConfirmada) nuevaVentaRef.current?.focus();
   }, [ventaConfirmada]);
-
-  // ── Reset helpers ─────────────────────────────────────────
-  function resetJugada() {
-    setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
-    setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
-    setRepetirOtraLoteria(null);
-  }
-
-  function resetParaNuevaLoteria() {
-    setStep(0); setModoSkipped(false);
-    setLoteria(null); setSorteo(null); setModo(null);
-    setHorariosSelec([]);
-    resetJugada();
-  }
-
-  const handleNuevaVenta = useCallback(() => {
-    setVentaConfirmada(null);
-    setStep(0); setModoSkipped(false);
-    setLoteria(null); setSorteo(null); setModo(null);
-    setHorariosSelec([]); setRepetirOtraLoteria(null);
-    setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
-    setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
-  }, []);
 
   async function handleImprimir() {
     setImprimiendo(true);
@@ -200,42 +196,28 @@ export default function Venta() {
 
   // ── Selección de lotería ──────────────────────────────────
   function selecLoteria(lot) {
-    setLoteria(lot); setSorteo(null); setModo(null); setModoSkipped(false);
-    resetJugada(); setStep(1);
+    if (loteria?.id === lot.id) return;
+    sesionRef.current += 1;
+    setLoteria(lot);
+    setHorariosSelec([]);
+    setModo(lot.modos_juego.find(m => m.cantidad_animalitos === 1) || lot.modos_juego[0]);
+    resetJugada();
   }
 
-  // ── Selección de sorteo (auto-selecciona modo directo) ────
-  function avanzarDesdeSorteo(s) {
-    setSorteo(s); resetJugada();
-    const directo = loteria?.modos_juego?.find(m => m.slug === 'directo');
-    if (directo) {
-      setModo(directo); setModoSkipped(true); setStep(3);
-    } else {
-      setModoSkipped(false); setStep(2);
-    }
+  function seleccionarModo(m) {
+    if (modo?.id === m.id) return;
+    sesionRef.current += 1;
+    setModo(m);
+    resetJugada();
   }
 
-  // ── Toggle único de horarios ───────────────────────────────
-  // El primer horario de una entrada nueva a este paso (modo todavia sin
-  // elegir) avanza de inmediato -- mismo camino y velocidad que hoy, 1
-  // click. Si ya hay un modo elegido (venimos de "agregar horario" desde
-  // el paso 3, o de "Repetir jugada" con todo precargado), los clicks
-  // solo suman/quitan del arreglo sin navegar -- el operador vuelve al
-  // paso 3 con el botón "Continuar a la jugada" que aparece mas abajo.
+  // ── Toggle de horarios: solo suma/quita, sin navegar a ningún lado ──
   function toggleHorario(s) {
-    const eraPrimero = horariosSelec.length === 0;
     setHorariosSelec(prev => {
       const idx = prev.findIndex(h => h.id === s.id);
       if (idx !== -1) return prev.filter((_, i) => i !== idx);
       return [...prev, s];
     });
-    if (eraPrimero && !modo) {
-      avanzarDesdeSorteo(s);
-    }
-  }
-
-  function selecModo(m) {
-    setModo(m); resetJugada(); setStep(3);
   }
 
   function toggleAnimMulti(a) {
@@ -249,7 +231,16 @@ export default function Venta() {
     });
   }
 
-  // ── Input rápido: ciclo número→monto→número ───────────────
+  function toggleAnimTripleta(a) {
+    setAnimTripleta(prev => {
+      const idx = prev.findIndex(x => x.id === a.id);
+      if (idx !== -1) return prev.filter((_, i) => i !== idx);
+      if (prev.length >= (modo?.cantidad_animalitos ?? 3)) return prev;
+      return [...prev, a];
+    });
+  }
+
+  // ── Input rápido: número→toggle/monto→número ──────────────
   function handleInputNumero(e) {
     if (e.key !== 'Enter') return;
     const val = inputNumero.trim();
@@ -267,8 +258,8 @@ export default function Venta() {
         setErrorNumero('Ya agregado');
         return;
       }
-      if (animTripleta.length >= 3) {
-        setErrorNumero('Ya tenés 3 animalitos');
+      if (animTripleta.length >= modo.cantidad_animalitos) {
+        setErrorNumero(`Ya tenés ${modo.cantidad_animalitos} animalitos`);
         return;
       }
       setInputNumero('');
@@ -288,21 +279,101 @@ export default function Venta() {
     setTimeout(() => montoRefs.current[anim.id]?.focus(), 50);
   }
 
-  // ── Fan-out compartido: sorteos × jugadasBase → carrito ───
-  // jugadasBase: [{ animalito_ids, monto, _animalitos }]. Se usa tanto
-  // para el flujo normal (un solo sorteo activo) como para varios
-  // horarios/otra lotería -- con un solo sorteo produce exactamente el
-  // mismo resultado que antes.
+  // ── Sincronización en vivo del carrito ────────────────────
+  // Cada combinación horario×animalito(s) con monto > 0 es una línea del
+  // carrito, recalculada en cada cambio relevante: actualiza in situ las
+  // que ya estaban (misma clave), agrega las nuevas, y quita las que
+  // pertenecen a la sesión de edición actual (ver sesionRef) pero ya no
+  // califican. Usar la sesión (no solo lotería+modo+sorteo) es necesario
+  // para que, si el operador sale de una lotería con líneas ya en el
+  // carrito y vuelve a entrar más tarde, esas líneas viejas no se
+  // resuciten ni se borren solas por coincidir el mismo sorteo/modo --
+  // solo las líneas creadas DESPUÉS de la activación actual son "vivas".
+  // Las líneas de "Aplicar esta jugada a otra lotería" nunca llevan
+  // _sesion, así que esta sincronización jamás las toca.
+  useEffect(() => {
+    if (!loteria || !modo) return;
+    const hoy = TODAY();
+    const sesion = sesionRef.current;
+    const deseados = new Map();
+
+    if (modo.cantidad_animalitos === 1) {
+      for (const { animalito, monto } of Object.values(selecMulti)) {
+        const m = parseFloat(monto);
+        if (!(m > 0)) continue;
+        for (const s of horariosSelec) {
+          const key = comboKey(s.id, modo.id, [animalito.id]);
+          deseados.set(key, {
+            _key: key, _sesion: sesion,
+            sorteo_id: s.id, modo_juego_id: modo.id, animalito_ids: [animalito.id], monto: m, fecha_sorteo: hoy,
+            _loteria_nombre: loteria.nombre, _sorteo_hora: s.hora,
+            _modo_nombre: modo.nombre, _animalitos: [animalito], _multiplicador: modo.multiplicador,
+          });
+        }
+      }
+    } else if (animTripleta.length === modo.cantidad_animalitos) {
+      const m = parseFloat(montoTripleta);
+      if (m > 0) {
+        const ids = animTripleta.map(a => a.id);
+        for (const s of horariosSelec) {
+          const key = comboKey(s.id, modo.id, ids);
+          deseados.set(key, {
+            _key: key, _sesion: sesion,
+            sorteo_id: s.id, modo_juego_id: modo.id, animalito_ids: ids, monto: m, fecha_sorteo: hoy,
+            _loteria_nombre: loteria.nombre, _sorteo_hora: s.hora,
+            _modo_nombre: modo.nombre, _animalitos: [...animTripleta], _multiplicador: modo.multiplicador,
+          });
+        }
+      }
+    }
+
+    setCarrito(prev => {
+      const siguen = [];
+      const yaVistos = new Set();
+      for (const item of prev) {
+        // Coincide exactamente con algo que se quiere ahora mismo -- se
+        // actualiza in situ y "adopta" la sesión actual. Esto cubre tanto
+        // una línea ya viva en esta sesión como una vieja de una
+        // activación anterior de esta misma lotería que el operador
+        // volvió a seleccionar idéntica (mismo sorteo+modo+animalito):
+        // sin este chequeo primero, terminaría duplicada en vez de
+        // actualizada.
+        if (deseados.has(item._key)) {
+          siguen.push(deseados.get(item._key));
+          yaVistos.add(item._key);
+          continue;
+        }
+        // No coincide con nada deseado ahora. Si es de la sesión actual,
+        // es porque se destildó el horario/animalito o se vació el monto
+        // -- se descarta. Si es de otra sesión/lotería, se deja intacta.
+        if (item._sesion === sesion) continue;
+        siguen.push(item);
+      }
+      for (const [key, combo] of deseados) {
+        if (!yaVistos.has(key)) siguen.push(combo);
+      }
+      return siguen;
+    });
+  }, [loteria, modo, horariosSelec, selecMulti, animTripleta, montoTripleta]);
+
+  // ── Aplicar la misma jugada armada a otra lotería ─────────
+  // Único lugar que sigue llamando a validarJugadas explícitamente: es
+  // una acción deliberada y poco frecuente (no en vivo por tecla), asi que
+  // vale la pena el aviso temprano de límite de banca. Los animalito_ids y
+  // modo_juego_id son propios de cada lotería, asi que se resuelven de
+  // nuevo por numero/slug contra la lotería destino.
   async function agregarJugadasAlCarrito({ loteriaObj, modoObj, sorteos, jugadasBase, onDone }) {
     if (!sorteos || sorteos.length === 0) { setError('Selecciona al menos un horario'); return; }
     if (!jugadasBase || jugadasBase.length === 0) return;
-    setError(''); setAlertas([]); setLoadingAgregar(true);
+    setError(''); setAlertas([]); setLoadingOtraLoteria(true);
 
     const hoy = TODAY();
     const combos = [];
     for (const s of sorteos) {
       for (const base of jugadasBase) {
+        const key = comboKey(s.id, modoObj.id, base.animalito_ids);
         combos.push({
+          _key: key,
           sorteo_id: s.id, modo_juego_id: modoObj.id,
           animalito_ids: base.animalito_ids, monto: base.monto, fecha_sorteo: hoy,
           _loteria_nombre: loteriaObj.nombre, _sorteo_hora: s.hora,
@@ -321,13 +392,13 @@ export default function Venta() {
       const bloqueadaIdx = val.resultados.findIndex(r => !r.ok && r.bloqueadoPorLimite);
       if (bloqueadaIdx !== -1) {
         setError(`${etiqueta(combos[bloqueadaIdx])}: ${val.resultados[bloqueadaIdx].error || 'Venta bloqueada por límite'}`);
-        setLoadingAgregar(false); return;
+        setLoadingOtraLoteria(false); return;
       }
 
       const conErrorIdx = val.resultados.findIndex(r => !r.ok);
       if (conErrorIdx !== -1) {
         setError(`${etiqueta(combos[conErrorIdx])}: ${val.resultados[conErrorIdx].error || 'Jugada no válida'}`);
-        setLoadingAgregar(false); return;
+        setLoadingOtraLoteria(false); return;
       }
 
       const nuevasAlertas = [];
@@ -339,63 +410,19 @@ export default function Venta() {
       });
       if (nuevasAlertas.length > 0) setAlertas(nuevasAlertas);
 
-      const nuevas = combos.map(c => ({ ...c, _key: Date.now() + Math.random() }));
-      setCarrito(prev => [...prev, ...nuevas]);
+      setCarrito(prev => {
+        const porKey = new Map(prev.map(item => [item._key, item]));
+        for (const c of combos) porKey.set(c._key, c);
+        return [...porKey.values()];
+      });
       onDone?.();
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoadingAgregar(false);
+      setLoadingOtraLoteria(false);
     }
   }
 
-  // ── Agregar jugadas multi-directo ─────────────────────────
-  async function handleAgregarDirecto() {
-    const items = Object.values(selecMulti).filter(x => parseFloat(x.monto) > 0);
-    if (items.length === 0) { setError('Ingresa monto para al menos un animalito'); return; }
-
-    const jugadasBase = items.map(x => ({
-      animalito_ids: [x.animalito.id], monto: parseFloat(x.monto), _animalitos: [x.animalito],
-    }));
-
-    await agregarJugadasAlCarrito({
-      loteriaObj: loteria, modoObj: modo, sorteos: sorteosActivos, jugadasBase,
-      onDone: () => {
-        setSelecMulti({});
-        setTimeout(() => inputNumeroRef.current?.focus(), 50);
-      },
-    });
-  }
-
-  function toggleAnimTripleta(a) {
-    setAnimTripleta(prev => {
-      const idx = prev.findIndex(x => x.id === a.id);
-      if (idx !== -1) return prev.filter((_, i) => i !== idx);
-      if (prev.length >= 3) return prev;
-      return [...prev, a];
-    });
-  }
-
-  async function handleAgregarTripleta() {
-    if (animTripleta.length < 3) { setError('Selecciona 3 animalitos'); return; }
-    if (!montoTripleta || parseFloat(montoTripleta) <= 0) { setError('Ingresa el monto'); return; }
-
-    const jugadasBase = [{
-      animalito_ids: animTripleta.map(a => a.id),
-      monto: parseFloat(montoTripleta),
-      _animalitos: [...animTripleta],
-    }];
-
-    await agregarJugadasAlCarrito({
-      loteriaObj: loteria, modoObj: modo, sorteos: sorteosActivos, jugadasBase,
-      onDone: () => resetJugada(),
-    });
-  }
-
-  // ── Aplicar la misma jugada armada a otra lotería ─────────
-  // Los animalito_ids y modo_juego_id son propios de cada lotería, asi
-  // que se resuelven de nuevo por numero/slug contra la lotería destino
-  // en vez de reusar los ids de la lotería activa.
   async function handleAgregarEnOtraLoteria() {
     const destino = repetirOtraLoteria?.loteria;
     const horarios = repetirOtraLoteria?.horariosSelec || [];
@@ -423,7 +450,7 @@ export default function Venta() {
     } else {
       const resueltos = animTripleta.map(a => destino.animalitos.find(x => x.numero === a.numero)).filter(Boolean);
       if (resueltos.length !== animTripleta.length) {
-        setError(`${destino.nombre} no tiene todos los animalitos de esta tripleta`);
+        setError(`${destino.nombre} no tiene todos los animalitos de esta jugada`);
         return;
       }
       jugadasBase = [{ animalito_ids: resueltos.map(a => a.id), monto: parseFloat(montoTripleta), _animalitos: resueltos }];
@@ -439,9 +466,6 @@ export default function Venta() {
   }
 
   // ── Modal "Buscar tickets" ─────────────────────────────────
-  // Pagar o repetir un ticket sin salir de la venta en curso. Reusa los
-  // mismos endpoints que Pagos.jsx (getTicket/pagarPremio) y la misma
-  // aplicarRepetir del prefill que llega desde Tickets.jsx.
   function abrirModalBuscarTicket() {
     setCodigoBuscar(''); setTicketBuscado(null); setErrorBuscarTicket('');
     setModalBuscarTicket(true);
@@ -568,15 +592,16 @@ export default function Venta() {
     return <div className="loading"><div className="spinner"></div><br />Cargando catálogo...</div>;
   }
 
-  const esDirecto = modo?.slug === 'directo';
-  const esTripleta = modo && !esDirecto;
+  // esDirecto agrupa cualquier modo de un solo animalito (Directo,
+  // Comodín...); esTripleta cualquier modo de más de uno. Se basan en
+  // cantidad_animalitos, no en el slug -- antes "Comodín Guácharo" caía
+  // mal clasificado como tripleta por no ser exactamente "directo".
+  const esDirecto = modo?.cantidad_animalitos === 1;
+  const esTripleta = modo && modo.cantidad_animalitos > 1;
   const esGuacharo = loteria?.slug === 'guacharoactivo';
   const hayJugadaArmada = !!modo && (Object.keys(selecMulti).length > 0 || animTripleta.length > 0);
   const totalSelecMulti = Object.values(selecMulti).reduce((s, x) => s + (parseFloat(x.monto) || 0), 0);
   const totalCarrito = carrito.reduce((s, i) => s + i.monto, 0);
-  const sorteosActivos = horariosSelec.length ? horariosSelec : (sorteo ? [sorteo] : []);
-  const stepperActivo = step === 0 ? 0 : step === 1 ? 1 : 2;
-  const STEPPER = ['Lotería', 'Sorteo', 'Jugada'];
 
   return (
     <div className="venta-page">
@@ -705,102 +730,53 @@ export default function Venta() {
         </div>
       )}
 
-      <div className="venta-layout">
+      <div className="venta-layout venta-layout-3col">
+        {/* ── Columna izquierda: loterías ── */}
+        <div className="venta-loterias">
+          <div className="card">
+            <h3 style={{ marginBottom: 8 }}>Lotería</h3>
+            <div className="loteria-grid loteria-grid-vertical">
+              {catalogo.map(lot => {
+                const logoMap = {
+                  'Lotto Activo': 'lotto_activo.webp',
+                  'La Granjita': 'la_granjita.webp',
+                  'Ruleta Activa': 'ruleta_activa.jpeg',
+                  'Selva Plus': 'selva_plus.webp',
+                  'Guacharo Activo': 'guacharo_activo.webp',
+                };
+                const logoFile = logoMap[lot.nombre] || 'lotto_activo.webp';
+                return (
+                  <div
+                    key={lot.id}
+                    className={`loteria-card${loteria?.id === lot.id ? ' selected' : ''}`}
+                    onClick={() => selecLoteria(lot)}
+                  >
+                    <img
+                      src={`/loterias/${logoFile}`}
+                      alt={lot.nombre}
+                      className="loteria-icon"
+                      style={{ height: '48px', objectFit: 'contain', marginBottom: '4px' }}
+                    />
+                    <div className="loteria-name">{lot.nombre}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Columna centro: horarios + animalito(s) ── */}
         <div className="venta-main">
           <div className="card">
-            {/* ── Stepper ── */}
-            <div className="stepper">
-              {STEPPER.map((s, i) => (
-                <div key={i} className="step-item">
-                  <div className={`step-circle ${i < stepperActivo ? 'done' : i === stepperActivo ? 'active' : ''}`}>
-                    {i < stepperActivo ? '✓' : i + 1}
-                  </div>
-                  <span className={`step-label ${i === stepperActivo ? 'active' : ''}`}>{s}</span>
-                  {i < STEPPER.length - 1 && <span className="step-sep">›</span>}
-                </div>
-              ))}
-            </div>
-
-            {/* ── Paso 0: Lotería ── */}
-            {step === 0 && (
+            {!loteria ? (
               <>
-                <h3>Selecciona la Lotería</h3>
-                <div className="loteria-grid">
-                  {catalogo.map(lot => {
-                    // Mapear nombre a archivo de logo
-                    const logoMap = {
-                      'Lotto Activo': 'lotto_activo.webp',
-                      'La Granjita': 'la_granjita.webp',
-                      'Ruleta Activa': 'ruleta_activa.jpeg',
-                      'Selva Plus': 'selva_plus.webp',
-                      'Guacharo Activo': 'guacharo_activo.webp',
-                    };
-                    const logoFile = logoMap[lot.nombre] || 'lotto_activo.webp';
-                    return (
-                      <div
-                        key={lot.id}
-                        className={`loteria-card${loteria?.id === lot.id ? ' selected' : ''}`}
-                        onClick={() => selecLoteria(lot)}
-                      >
-                        <img
-                          src={`/loterias/${logoFile}`}
-                          alt={lot.nombre}
-                          className="loteria-icon"
-                          style={{ height: '60px', objectFit: 'contain', marginBottom: '4px' }}
-                        />
-                        <div className="loteria-name">{lot.nombre}</div>
-                      </div>
-                    );
-                  })}
-                </div>
+                {error && <div className="alert alert-danger">{error}</div>}
+                <p className="text-muted text-center" style={{ padding: '48px 0' }}>← Elegí una lotería para empezar</p>
               </>
-            )}
-
-            {/* ── Breadcrumb (pasos 1+) ── */}
-            {step >= 1 && loteria && (
-              <div
-                className="flex align-center gap-8 mb-12"
-                style={{ fontSize: '0.85rem', cursor: 'pointer', color: 'var(--primary)', flexWrap: 'wrap' }}
-                onClick={() => { setStep(0); resetJugada(); setSorteo(null); setModo(null); setHorariosSelec([]); }}
-              >
-                <span>🎰 <strong>{loteria.nombre}</strong></span>
-                {sorteo && (
-                  <>
-                    <span className="text-muted">·</span>
-                    <span>
-                      ⏰ {sorteosActivos.length > 1 ? `${sorteosActivos.length} horarios` : hora12(sorteo.hora)}
-                      {step >= 3 && (
-                        <span
-                          className="cambiar-modo-link"
-                          onClick={e => { e.stopPropagation(); setStep(1); }}
-                        >
-                          agregar horario
-                        </span>
-                      )}
-                    </span>
-                  </>
-                )}
-                {modo && (
-                  <><span className="text-muted">·</span><span>🎲 {modo.nombre}</span>
-                    {step >= 3 && (
-                      <span
-                        className="cambiar-modo-link"
-                        onClick={e => { e.stopPropagation(); resetJugada(); setStep(2); setModo(null); setModoSkipped(false); }}
-                      >
-                        cambiar modo
-                      </span>
-                    )}
-                  </>
-                )}
-                <span style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>cambiar ›</span>
-              </div>
-            )}
-
-            {/* ── Paso 1: Sorteo ── */}
-            {step === 1 && (
+            ) : (
               <>
-                <h3>Selecciona el Sorteo</h3>
-                <p className="text-muted text-sm mb-8">Tocá un horario para jugarlo. Podés tocar más de uno.</p>
+                <h3 style={{ marginBottom: 4 }}>🎰 {loteria.nombre}</h3>
+                <p className="text-muted text-sm mb-8">Tocá los horarios que querés jugar. Podés tocar más de uno.</p>
                 <div className="sorteo-grid">
                   {loteria.sorteos.map(s => {
                     const abierto = sorteoAbierto(s);
@@ -818,40 +794,26 @@ export default function Venta() {
                     );
                   })}
                 </div>
-                {modo && horariosSelec.length > 0 && (
-                  <button
-                    className="btn btn-primary mt-8"
-                    onClick={() => setStep(3)}
-                  >
-                    Continuar a la jugada ({horariosSelec.length} horario{horariosSelec.length !== 1 ? 's' : ''}) →
-                  </button>
+
+                {loteria.modos_juego.length > 1 && (
+                  <div className="flex gap-8 mb-12" style={{ flexWrap: 'wrap' }}>
+                    {loteria.modos_juego.map(m => (
+                      <button
+                        key={m.id}
+                        className={`btn btn-sm btn-inline ${modo?.id === m.id ? 'btn-primary' : 'btn-outline'}`}
+                        onClick={() => seleccionarModo(m)}
+                      >
+                        {m.nombre}
+                      </button>
+                    ))}
+                  </div>
                 )}
-              </>
-            )}
 
-            {/* ── Paso 2: Modo (solo si no fue auto-seleccionado) ── */}
-            {step === 2 && !modoSkipped && (
-              <>
-                <h3>Modo de Juego</h3>
-                <div className="modo-grid">
-                  {loteria.modos_juego.map(m => (
-                    <div key={m.id} className={`modo-card${modo?.id === m.id ? ' selected' : ''}`} onClick={() => selecModo(m)}>
-                      <div className="modo-nombre">{m.nombre}</div>
-                      <div className="modo-mult">Paga x{m.multiplicador}</div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* ── Paso 3: Jugada builder ── */}
-            {step >= 3 && modo && (
-              <>
                 {alertas.map((a, i) => <div key={i} className="alert alert-warning">{a}</div>)}
                 {error && <div className="alert alert-danger">{error}</div>}
 
-                {/* ─ Modo DIRECTO ─ */}
-                {esDirecto && (
+                {/* ─ Modos de un solo animalito (Directo, Comodín...) ─ */}
+                {modo && esDirecto && (
                   <div className="jugada-builder">
                     <div className="jugada-tablero">
                       <h3 style={{ marginBottom: 8 }}>Elige animalito(s)</h3>
@@ -915,27 +877,17 @@ export default function Venta() {
                       )}
 
                       {Object.keys(selecMulti).length > 0 && (
-                        <>
-                          <div className="multi-total">Total: {fmt(totalSelecMulti)}</div>
-                          <button
-                            className="btn btn-primary"
-                            style={{ marginTop: 8, fontSize: '0.85rem', minHeight: 40 }}
-                            onClick={handleAgregarDirecto}
-                            disabled={loadingAgregar || totalSelecMulti <= 0}
-                          >
-                            {loadingAgregar ? 'Validando...' : '+ Agregar al carrito'}
-                          </button>
-                        </>
+                        <div className="multi-total">Total: {fmt(totalSelecMulti)}</div>
                       )}
                     </div>
                   </div>
                 )}
 
-                {/* ─ Modo TRIPLETA ─ */}
-                {esTripleta && (
+                {/* ─ Modos de varios animalitos (Tripleta...) ─ */}
+                {modo && esTripleta && (
                   <>
                     <h3 style={{ marginBottom: 8 }}>
-                      Selecciona 3 animalitos ({animTripleta.length}/3)
+                      Selecciona {modo.cantidad_animalitos} animalitos ({animTripleta.length}/{modo.cantidad_animalitos})
                     </h3>
                     <div className="numero-rapido-wrap">
                       <input
@@ -953,21 +905,20 @@ export default function Venta() {
                       <SelectorAnimalito
                         animalitos={loteria.animalitos}
                         seleccionados={animTripleta}
-                        cantidad={3}
+                        cantidad={modo.cantidad_animalitos}
                         onSelect={toggleAnimTripleta}
                         limitarSeleccion={true}
                         loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
                       />
                     </div>
-                    {animTripleta.length === 3 && (
+                    {animTripleta.length === modo.cantidad_animalitos && (
                       <div className="field mt-8">
-                        <label>Monto a apostar (Tripleta paga x{modo.multiplicador})</label>
+                        <label>Monto a apostar ({modo.nombre} paga x{modo.multiplicador})</label>
                         <input
                           type="number" min="1" step="0.01"
                           value={montoTripleta}
                           onChange={e => setMontoTripleta(e.target.value)}
                           placeholder="0.00" autoFocus
-                          onKeyDown={e => e.key === 'Enter' && handleAgregarTripleta()}
                         />
                         {montoTripleta && (
                           <p className="text-muted text-sm mt-8">
@@ -976,25 +927,20 @@ export default function Venta() {
                         )}
                       </div>
                     )}
-                    <button
-                      className="btn btn-primary mt-8"
-                      onClick={handleAgregarTripleta}
-                      disabled={loadingAgregar || animTripleta.length < 3 || !montoTripleta}
-                    >
-                      {loadingAgregar ? 'Validando...' : '+ Agregar tripleta al carrito'}
-                    </button>
                   </>
                 )}
 
-                <button
-                  className="btn btn-outline btn-sm mt-12"
-                  onClick={abrirModalBuscarTicket}
-                >
-                  🔍 Buscar tickets
-                </button>
+                {modo && (
+                  <button
+                    className="btn btn-outline btn-sm mt-12"
+                    onClick={abrirModalBuscarTicket}
+                  >
+                    🔍 Buscar tickets
+                  </button>
+                )}
 
                 {/* ─ Repetir esta misma jugada en otra lotería ─ */}
-                {((esDirecto && Object.keys(selecMulti).length > 0) || (esTripleta && animTripleta.length === 3 && montoTripleta)) && (
+                {((esDirecto && Object.keys(selecMulti).length > 0) || (esTripleta && animTripleta.length === modo.cantidad_animalitos && montoTripleta)) && (
                   <div className="mt-12">
                     {!repetirOtraLoteria ? (
                       <button
@@ -1048,10 +994,10 @@ export default function Venta() {
                             </div>
                             <button
                               className="btn btn-primary btn-sm mt-8"
-                              disabled={loadingAgregar || repetirOtraLoteria.horariosSelec.length === 0}
+                              disabled={loadingOtraLoteria || repetirOtraLoteria.horariosSelec.length === 0}
                               onClick={handleAgregarEnOtraLoteria}
                             >
-                              {loadingAgregar ? 'Validando...' : '+ Agregar al carrito'}
+                              {loadingOtraLoteria ? 'Validando...' : '+ Agregar al carrito'}
                             </button>
                           </>
                         )}
@@ -1064,7 +1010,7 @@ export default function Venta() {
           </div>
         </div>
 
-        {/* ── Carrito lateral ── */}
+        {/* ── Columna derecha: carrito (en vivo) ── */}
         {carrito.length > 0 && (
           <div className="venta-sidebar">
             <div className="card">
@@ -1072,20 +1018,25 @@ export default function Venta() {
                 Carrito ({carrito.length} jugada{carrito.length !== 1 ? 's' : ''})
               </h2>
 
-              {carrito.map((item, idx) => (
-                <div key={item._key} className="carrito-item">
-                  <div className="carrito-info">
-                    <div className="carrito-titulo">
-                      {item._animalitos.map(a => `${EMOJI_MAP[a.nombre] || '🐾'} ${a.nombre}`).join(' + ')}
+              {carrito.map(item => {
+                const esDeSeleccionActiva = item._sesion === sesionRef.current;
+                return (
+                  <div key={item._key} className="carrito-item">
+                    <div className="carrito-info">
+                      <div className="carrito-titulo">
+                        {item._animalitos.map(a => `${EMOJI_MAP[a.nombre] || '🐾'} ${a.nombre}`).join(' + ')}
+                      </div>
+                      <div className="carrito-meta">
+                        {item._loteria_nombre} · {hora12(item._sorteo_hora)} · {item._modo_nombre}
+                      </div>
                     </div>
-                    <div className="carrito-meta">
-                      {item._loteria_nombre} · {hora12(item._sorteo_hora)} · {item._modo_nombre}
-                    </div>
+                    <div className="carrito-monto">{fmt(item.monto)}</div>
+                    {!esDeSeleccionActiva && (
+                      <button className="carrito-del" onClick={() => setCarrito(c => c.filter(x => x._key !== item._key))}>✕</button>
+                    )}
                   </div>
-                  <div className="carrito-monto">{fmt(item.monto)}</div>
-                  <button className="carrito-del" onClick={() => setCarrito(c => c.filter((_, i) => i !== idx))}>✕</button>
-                </div>
-              ))}
+                );
+              })}
 
               <div className="carrito-total-wrap">
                 <span className="carrito-total-label">Total</span>
@@ -1141,7 +1092,7 @@ export default function Venta() {
                 </div>
               )}
 
-              {error && !loadingAgregar && <div className="alert alert-danger">{error}</div>}
+              {error && <div className="alert alert-danger">{error}</div>}
 
               <button
                 className="btn btn-accent"
@@ -1150,16 +1101,6 @@ export default function Venta() {
               >
                 {loadingConfirmar ? 'Registrando...' : '✓ Confirmar venta'}
               </button>
-
-              {(!modo || esDirecto) && (
-                <button
-                  className="btn btn-outline btn-sm"
-                  style={{ marginTop: 8 }}
-                  onClick={resetParaNuevaLoteria}
-                >
-                  + Agregar otra lotería
-                </button>
-              )}
             </div>
           </div>
         )}

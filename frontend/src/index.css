@@ -511,36 +511,6 @@ small { font-size: 0.8rem; color: var(--text-muted); }
 .carrito-total-label { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
 .carrito-total-monto { font-size: 1.15rem; font-weight: 700; color: var(--accent-dark); }
 
-/* ── Stepper ── */
-.stepper {
-  display: flex;
-  align-items: center;
-  margin-bottom: 16px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-  -webkit-overflow-scrolling: touch;
-}
-.step-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.step-circle {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 700;
-  background: var(--border);
-  color: var(--text-muted);
-  flex-shrink: 0;
-  transition: background 0.2s;
-}
-.step-circle.done { background: var(--success); color: #fff; }
-.step-circle.active { background: var(--accent); color: #fff; }
-.step-label { font-size: 0.72rem; color: var(--text-muted); }
-.step-label.active { color: var(--accent-dark); font-weight: 600; }
-.step-sep { color: var(--border); font-size: 0.9rem; margin: 0 6px; }
-
 /* ── Badge ── */
 .badge {
   display: inline-block;
@@ -783,11 +753,11 @@ small { font-size: 0.8rem; color: var(--text-muted); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Venta page layout (wider, dos columnas) ── */
+/* ── Venta page layout (pantalla continua, tres columnas) ── */
 .venta-page {
   min-height: calc(100vh - 56px);
   padding: 16px;
-  max-width: 1100px;
+  max-width: 1320px;
   margin: 0 auto;
 }
 .venta-layout {
@@ -795,6 +765,7 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   gap: 16px;
   align-items: flex-start;
 }
+.venta-loterias { width: 180px; flex-shrink: 0; }
 .venta-main { flex: 1; min-width: 0; }
 .venta-sidebar {
   width: 290px;
@@ -804,12 +775,20 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   max-height: calc(100vh - 88px);
   overflow-y: auto;
 }
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .venta-layout { flex-direction: column; }
+  .venta-loterias { width: 100%; }
   .venta-sidebar { width: 100%; position: static; max-height: none; }
 }
 
-/* ── Jugada builder (tablero + seleccion, en step 3 directo) ── */
+/* La lista de loterías reusa .loteria-grid/.loteria-card, pero como
+   columna angosta y persistente se apila en una sola columna. */
+.loteria-grid-vertical { grid-template-columns: 1fr; }
+@media (max-width: 900px) {
+  .loteria-grid-vertical { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}
+
+/* ── Jugada builder (tablero + seleccion, modos de un solo animalito) ── */
 .jugada-builder {
   display: flex;
   gap: 14px;
@@ -897,16 +876,6 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   color: var(--text-muted);
   font-size: 0.8rem;
   padding: 16px 0;
-}
-
-/* ── Cambiar modo link ── */
-.cambiar-modo-link {
-  font-size: 0.78rem;
-  color: var(--primary);
-  cursor: pointer;
-  text-decoration: underline;
-  margin-left: 8px;
-  white-space: nowrap;
 }
 
 /* ── Print ── */
