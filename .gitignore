@@ -14,10 +14,6 @@ data/
 *.db
 *.sqlite
 
-# Images (pesadas)
-backend/public/animalitos/
-frontend/public/loterias/
-
 # Build output
 dist/
 build/
