@@ -29,6 +29,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 .DS_Store?
 ._*
 .Spotlight-V100
