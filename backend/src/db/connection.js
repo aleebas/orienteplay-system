@@ -73,4 +73,21 @@ if (jugadasDDL && !jugadasDDL.sql.includes('credito')) {
   db.pragma('foreign_keys = ON');
 }
 
+// Repara candidatos huerfanos: sorteos que ya tienen un resultado oficial
+// pero cuyo resultados_candidatos quedo en pendiente_confirmacion/agotado
+// porque la carga manual (antes de este fix) no lo resolvia. Sin esto,
+// el panel de "resultados automaticos por revisar" los mostraria para
+// siempre. Idempotente -- corre en cada arranque, no hace nada si ya
+// estan resueltos.
+db.exec(`
+  UPDATE resultados_candidatos
+  SET estado = 'confirmado', actualizado_en = datetime('now')
+  WHERE estado IN ('pendiente_confirmacion', 'agotado')
+    AND EXISTS (
+      SELECT 1 FROM resultados r
+      WHERE r.sorteo_id = resultados_candidatos.sorteo_id
+        AND r.fecha = resultados_candidatos.fecha
+    )
+`);
+
 module.exports = db;

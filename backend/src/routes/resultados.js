@@ -37,6 +37,15 @@ router.post('/', (req, res) => {
   // de esa fecha (pensado para cuando se carguen varios resultados del dia).
   actualizarEstadoTickets(sorteo_id, fechaResultado);
 
+  // Si el scraper habia dejado un candidato pendiente/agotado para este
+  // mismo sorteo y fecha, resolverlo tambien -- de lo contrario queda
+  // huerfano y el panel de "resultados automaticos por revisar" lo sigue
+  // mostrando para siempre aunque el sorteo ya tenga resultado oficial.
+  db.prepare(
+    `UPDATE resultados_candidatos SET estado = 'confirmado', actualizado_en = datetime('now')
+     WHERE sorteo_id = ? AND fecha = ? AND estado IN ('pendiente_confirmacion', 'agotado')`
+  ).run(sorteo_id, fechaResultado);
+
   res.status(201).json({ mensaje: 'Resultado registrado', resultado_id: r.lastInsertRowid });
 });
 

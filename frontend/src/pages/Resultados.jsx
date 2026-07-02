@@ -61,6 +61,7 @@ export default function Resultados() {
     try {
       await confirmarCandidato(c.id);
       setExito(`Resultado confirmado: ${c.sorteo_hora} → ${c.animalito_nombre}`);
+      setCandidatos(prev => prev.filter(x => x.id !== c.id));
       await cargar();
     } catch (err) {
       setError(err.message);
@@ -90,6 +91,9 @@ export default function Resultados() {
     try {
       await cargarResultado(sorteoSelec.id, a.id, fecha);
       setExito(`Resultado cargado: ${sorteoSelec.hora} → ${EMOJI_MAP[a.nombre] || '🐾'} ${a.nombre}`);
+      // Saca de inmediato cualquier candidato pendiente/agotado de este
+      // mismo sorteo del panel, sin esperar el refetch de cargar().
+      setCandidatos(prev => prev.filter(c => c.sorteo_id !== sorteoSelec.id));
       setSorteoSelec(null);
       setAnimalito(null);
       setNumeroInput('');
