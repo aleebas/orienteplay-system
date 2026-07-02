@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.9.1",
-    "cors": "^2.8.5",
+    "escpos": "^3.0.0-alpha.6",
+    "escpos-usb": "^3.0.0-alpha.4",
     "express": "^4.19.2",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2"

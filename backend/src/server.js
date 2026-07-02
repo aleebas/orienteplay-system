@@ -58,6 +58,18 @@ app.use('/api/agencias', require('./routes/agencias'));
 app.use('/api/reportes', require('./routes/reportes'));
 app.use('/api/usuarios', require('./routes/usuarios'));
 
+// La impresora térmica es hardware USB local: si el driver nativo (escpos-usb)
+// no está disponible en este servidor (p.ej. un contenedor cloud sin USB),
+// no debe tumbar el resto de la API — solo esta ruta queda inhabilitada.
+try {
+  app.use('/api/imprimir', require('./routes/imprimir'));
+} catch (err) {
+  console.error('Impresión térmica no disponible en este servidor:', err.message);
+  app.use('/api/imprimir', (req, res) => {
+    res.status(503).json({ error: 'Impresión térmica no disponible en este servidor' });
+  });
+}
+
 app.get('/api/health', (req, res) => {
   const devMode = process.env.SKIP_HORARIO_CHECK === 'true';
   res.json({

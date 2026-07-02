@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta } from '../api/cliente';
+import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket } from '../api/cliente';
 import SelectorAnimalito, { EMOJI_MAP } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
@@ -58,6 +58,8 @@ export default function Venta() {
   const [loadingConfirmar, setLoadingConfirmar] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [ventaConfirmada, setVentaConfirmada] = useState(null);
+  const [imprimiendo, setImprimiendo] = useState(false);
+  const [errorImprimir, setErrorImprimir] = useState('');
 
   // ── Carga catálogo ────────────────────────────────────────
   useEffect(() => {
@@ -92,6 +94,18 @@ export default function Venta() {
     setSelecMulti({}); setAnimTripleta([]); setMontoTripleta('');
     setInputNumero(''); setErrorNumero(''); setAlertas([]); setError('');
   }, []);
+
+  async function handleImprimir() {
+    setImprimiendo(true);
+    setErrorImprimir('');
+    try {
+      await imprimirTicket(ventaConfirmada, auth?.user?.agencia_nombre);
+    } catch (err) {
+      setErrorImprimir(err.message || 'No se pudo imprimir el ticket');
+    } finally {
+      setImprimiendo(false);
+    }
+  }
 
   // ── Selección de lotería ──────────────────────────────────
   function selecLoteria(lot) {
@@ -295,8 +309,9 @@ export default function Venta() {
           <button ref={nuevaVentaRef} className="btn btn-accent" onClick={handleNuevaVenta}>
             + Nueva venta
           </button>
-          <button className="btn btn-outline" onClick={() => window.print()}>
-            🖨 Imprimir comprobante
+          {errorImprimir && <div className="alert alert-danger">{errorImprimir}</div>}
+          <button className="btn btn-outline" onClick={handleImprimir} disabled={imprimiendo}>
+            {imprimiendo ? '⟳ Imprimiendo...' : '🖨 Imprimir comprobante'}
           </button>
           <BotonWhatsApp
             comprobanteRef={comprobanteRef}

@@ -101,4 +101,7 @@ export const getUsuarios = () =>
 export const crearUsuario = (payload) =>
   req('POST', '/usuarios', payload);
 
+export const imprimirTicket = (ventaData, agenciaNombre) =>
+  req('POST', '/imprimir', { venta: ventaData.venta, jugadas: ventaData.jugadas, agenciaNombre });
+
 export const API = { get: (path) => req('GET', path) };
