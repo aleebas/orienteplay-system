@@ -37,12 +37,15 @@ router.get('/ventas-por-vendedor', (req, res) => {
   const { fecha } = req.query;
   const f = fecha || new Date().toISOString().slice(0, 10);
   const rows = db.prepare(
-    `SELECT u.nombre AS vendedor, COUNT(*) AS cantidad_jugadas, SUM(j.monto) AS total_vendido
+    `SELECT u.nombre AS vendedor, u.comision_porcentaje, COUNT(*) AS cantidad_jugadas, SUM(j.monto) AS total_vendido
      FROM jugadas j
      JOIN usuarios u ON u.id = j.usuario_id
      WHERE j.agencia_id = ? AND j.fecha_sorteo = ?
      GROUP BY u.id ORDER BY total_vendido DESC`
-  ).all(req.user.agencia_id, f);
+  ).all(req.user.agencia_id, f).map(r => ({
+    ...r,
+    comision_ganada: Math.round(r.total_vendido * r.comision_porcentaje / 100 * 100) / 100,
+  }));
   res.json(rows);
 });
 
@@ -116,6 +119,38 @@ router.get('/ultimas-ventas', (req, res) => {
     LIMIT ?
   `).all(req.user.agencia_id, fecha, limite);
 
+  res.json(rows);
+});
+
+// Top 5 animalitos con mas dinero apostado en el dia
+router.get('/top-animalitos', (req, res) => {
+  const f = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const rows = db.prepare(`
+    SELECT a.numero, a.nombre, SUM(j.monto) AS total
+    FROM jugada_animalitos ja
+    JOIN jugadas j ON j.id = ja.jugada_id
+    JOIN animalitos a ON a.id = ja.animalito_id
+    WHERE j.agencia_id = ? AND j.fecha_sorteo = ?
+    GROUP BY a.id
+    ORDER BY total DESC
+    LIMIT 5
+  `).all(req.user.agencia_id, f);
+  res.json(rows);
+});
+
+// Top 3 loterias con mas ventas en el dia
+router.get('/top-loterias', (req, res) => {
+  const f = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const rows = db.prepare(`
+    SELECT l.nombre AS loteria, SUM(j.monto) AS total
+    FROM jugadas j
+    JOIN sorteos s ON s.id = j.sorteo_id
+    JOIN loterias l ON l.id = s.loteria_id
+    WHERE j.agencia_id = ? AND j.fecha_sorteo = ?
+    GROUP BY l.id
+    ORDER BY total DESC
+    LIMIT 3
+  `).all(req.user.agencia_id, f);
   res.json(rows);
 });
 

@@ -9,6 +9,7 @@ export default function Caja() {
   const navigate = useNavigate();
   const [resumen, setResumen] = useState(null);
   const [montoInicial, setMontoInicial] = useState('');
+  const [fondoBanco, setFondoBanco] = useState('');
   const [montoFinal, setMontoFinal] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -39,10 +40,11 @@ export default function Caja() {
     setError('');
     setLoading(true);
     try {
-      await abrirCaja(parseFloat(montoInicial) || 0);
+      await abrirCaja(parseFloat(montoInicial) || 0, parseFloat(fondoBanco) || 0);
       const cajaActual = await getCajaActual();
       setCaja(cajaActual);
       setMontoInicial('');
+      setFondoBanco('');
       navigate('/venta');
     } catch (err) {
       setError(err.message);
@@ -76,14 +78,14 @@ export default function Caja() {
           <div className="caja-cerrada-icon">💰</div>
           <h1 style={{ marginBottom: 6 }}>Abrir Caja</h1>
           <p className="text-muted text-sm mb-12">
-            Ingresa el monto inicial en efectivo para comenzar la jornada.
+            Ingresa los montos con los que arranca la jornada.
           </p>
 
           {error && <div className="alert alert-danger">{error}</div>}
 
           <form onSubmit={handleAbrir}>
             <div className="field">
-              <label>Monto inicial (Bs.)</label>
+              <label>Efectivo en caja (Bs.)</label>
               <input
                 type="number"
                 min="0"
@@ -92,6 +94,17 @@ export default function Caja() {
                 onChange={e => setMontoInicial(e.target.value)}
                 placeholder="0.00"
                 autoFocus
+              />
+            </div>
+            <div className="field">
+              <label>Fondo en banco/cuenta (Bs.)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={fondoBanco}
+                onChange={e => setFondoBanco(e.target.value)}
+                placeholder="0.00"
               />
             </div>
             <button type="submit" className="btn btn-accent" disabled={loading}>
@@ -161,8 +174,16 @@ export default function Caja() {
 
           <div className="card">
             <div className="flex justify-between mb-8">
-              <span className="text-muted text-sm">Monto inicial</span>
+              <span className="text-muted text-sm">Efectivo en caja</span>
               <span className="bold">{fmt(resumen.monto_inicial)}</span>
+            </div>
+            <div className="flex justify-between mb-8">
+              <span className="text-muted text-sm">Fondo en banco/cuenta</span>
+              <span className="bold">{fmt(resumen.fondo_banco)}</span>
+            </div>
+            <div className="flex justify-between mb-8">
+              <span className="text-muted text-sm">Total disponible</span>
+              <span className="bold text-primary">{fmt(resumen.total_disponible)}</span>
             </div>
             <div className="progress-bar">
               <div className="progress-fill" style={{ width: `${pctEfectivo}%` }} />
@@ -174,6 +195,36 @@ export default function Caja() {
               </span>
             </div>
           </div>
+
+          {resumen.comisiones_vendedores?.length > 0 && (
+            <div className="card">
+              <h2>Comisión por vendedor</h2>
+              <div className="tabla-wrap">
+                <table className="tabla">
+                  <thead>
+                    <tr>
+                      <th>Vendedor</th>
+                      <th style={{ textAlign: 'right' }}>Vendido</th>
+                      <th style={{ textAlign: 'right' }}>%</th>
+                      <th style={{ textAlign: 'right' }}>Comisión</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resumen.comisiones_vendedores.map(c => (
+                      <tr key={c.usuario_id}>
+                        <td>{c.nombre}</td>
+                        <td style={{ textAlign: 'right' }}>{fmt(c.monto_vendido)}</td>
+                        <td style={{ textAlign: 'right' }}>{c.comision_porcentaje}%</td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>
+                          {fmt(c.comision_ganada)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <div className="loading">

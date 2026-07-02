@@ -43,7 +43,7 @@ const Comprobante = forwardRef(function Comprobante({ ventaData, agenciaNombre }
           alt="OrientePlay"
           style={{ height: '28px', objectFit: 'contain', margin: '0 auto 4px' }}
         />
-        <div style={{ fontSize: '0.7rem', fontFamily: "'Courier New', monospace", lineHeight: 1.4 }}>
+        <div style={{ fontSize: '0.74rem', fontFamily: "'Courier New', monospace", lineHeight: 1.4 }}>
           <div style={{ fontWeight: 700 }}>ORIENTE PLAY</div>
           <div>{(agenciaNombre || 'MI AGENCIA').toUpperCase()}</div>
           <div>TCK# {venta.codigo}</div>

@@ -120,11 +120,13 @@ router.get('/', (req, res) => {
       j.creada_en,
       j.monto,
       j.metodo_pago,
+      v.codigo AS venta_codigo,
       l.nombre AS loteria_nombre,
       s.hora AS sorteo_hora,
       GROUP_CONCAT(a.numero || '-' || a.nombre, ', ') AS animalitos
     FROM jugadas j
     JOIN tickets t ON t.jugada_id = j.id
+    JOIN ventas v ON v.id = j.venta_id
     JOIN sorteos s ON s.id = j.sorteo_id
     JOIN loterias l ON l.id = s.loteria_id
     JOIN jugada_animalitos ja ON ja.jugada_id = j.id
@@ -256,6 +258,60 @@ router.post('/', (req, res) => {
     tickets,
     alertas: conAlerta ? validaciones.flatMap(v => v.resultado.revisiones || []).filter(r => r.motivo) : [],
   });
+});
+
+const MINUTOS_LIMITE_ANULACION = 20;
+
+// Anula todos los tickets de una venta si siguen pendientes, la venta
+// se hizo hace menos de MINUTOS_LIMITE_ANULACION minutos, y el sorteo
+// de cada jugada todavia no comenzo.
+router.post('/anular/:codigoVenta', (req, res) => {
+  const venta = db.prepare(`SELECT * FROM ventas WHERE codigo = ?`).get(req.params.codigoVenta);
+  if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
+  if (venta.agencia_id !== req.user.agencia_id) {
+    return res.status(403).json({ error: 'No autorizado para anular esta venta' });
+  }
+
+  const jugadas = db.prepare(
+    `SELECT j.id, j.creada_en, t.id AS ticket_id, t.estado AS ticket_estado, s.hora AS sorteo_hora
+     FROM jugadas j
+     JOIN tickets t ON t.jugada_id = j.id
+     JOIN sorteos s ON s.id = j.sorteo_id
+     WHERE j.venta_id = ?`
+  ).all(venta.id);
+
+  if (jugadas.length === 0) {
+    return res.status(404).json({ error: 'No hay jugadas asociadas a esta venta' });
+  }
+
+  const ahora = new Date();
+  for (const j of jugadas) {
+    if (j.ticket_estado !== 'pendiente') {
+      return res.status(409).json({ error: `Esta venta tiene un ticket en estado "${j.ticket_estado}", no se puede anular` });
+    }
+
+    // creada_en viene de sqlite datetime('now') en UTC, sin sufijo de zona.
+    const creadaEnUTC = new Date(j.creada_en.replace(' ', 'T') + 'Z');
+    const minutosTranscurridos = (ahora.getTime() - creadaEnUTC.getTime()) / 60000;
+    if (minutosTranscurridos > MINUTOS_LIMITE_ANULACION) {
+      return res.status(409).json({ error: `Ya pasaron mas de ${MINUTOS_LIMITE_ANULACION} minutos desde la venta, no se puede anular` });
+    }
+
+    const [h, m] = j.sorteo_hora.split(':').map(Number);
+    const horaSorteo = new Date(ahora);
+    horaSorteo.setHours(h, m, 0, 0);
+    if (ahora >= horaSorteo) {
+      return res.status(409).json({ error: `El sorteo de las ${j.sorteo_hora} ya comenzo, no se puede anular` });
+    }
+  }
+
+  const anularTodo = db.transaction(() => {
+    const upd = db.prepare(`UPDATE tickets SET estado = 'anulado' WHERE id = ?`);
+    jugadas.forEach(j => upd.run(j.ticket_id));
+  });
+  anularTodo();
+
+  res.json({ mensaje: 'Ticket(s) anulado(s)', cantidad: jugadas.length });
 });
 
 router.get('/venta/:codigo', (req, res) => {

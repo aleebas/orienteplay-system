@@ -1,9 +1,24 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getTickets, getTicket } from '../api/cliente';
+import { getTickets, getTicket, anularVenta } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import { hora12, fmt, horaVenezuela } from '../utils/formato';
 
 const TODAY = new Date().toISOString().slice(0, 10);
+const MINUTOS_LIMITE_ANULACION = 20;
+
+// Misma regla que el backend (POST /api/jugadas/anular/:codigoVenta):
+// pendiente + menos de 20 min desde la venta + sorteo aun no empieza.
+function puedeAnular(t) {
+  if (t.estado !== 'pendiente') return false;
+  const creadaEnUTC = new Date(t.creada_en.replace(' ', 'T') + 'Z');
+  const minutos = (Date.now() - creadaEnUTC.getTime()) / 60000;
+  if (minutos > MINUTOS_LIMITE_ANULACION) return false;
+  const [h, m] = t.sorteo_hora.split(':').map(Number);
+  const ahora = new Date();
+  const horaSorteo = new Date(ahora);
+  horaSorteo.setHours(h, m, 0, 0);
+  return ahora < horaSorteo;
+}
 
 const ESTADOS = [
   { key: 'todos', label: 'Todos' },
@@ -34,6 +49,9 @@ export default function Tickets() {
   const [loadingDetalle, setLoadingDetalle] = useState(false);
   const [errorDetalle, setErrorDetalle] = useState('');
 
+  const [anulandoId, setAnulandoId] = useState(null);
+  const [errorAnular, setErrorAnular] = useState('');
+
   useEffect(() => {
     cargarTickets();
   }, []);
@@ -59,6 +77,20 @@ export default function Tickets() {
     }
     return r;
   }, [lista, estadoFiltro, busqueda]);
+
+  async function handleAnular(t) {
+    if (!confirm(`¿Anular el ticket ${t.ticket_codigo}?`)) return;
+    setErrorAnular('');
+    setAnulandoId(t.ticket_id);
+    try {
+      await anularVenta(t.venta_codigo);
+      cargarTickets();
+    } catch (err) {
+      setErrorAnular(err.message || 'No se pudo anular el ticket');
+    } finally {
+      setAnulandoId(null);
+    }
+  }
 
   async function verDetalle(codigo) {
     setErrorDetalle('');
@@ -103,6 +135,7 @@ export default function Tickets() {
         </div>
 
         {error && <div className="alert alert-danger">{error}</div>}
+        {errorAnular && <div className="alert alert-danger">{errorAnular}</div>}
 
         {loading ? (
           <div className="loading"><div className="spinner"></div></div>
@@ -117,11 +150,12 @@ export default function Tickets() {
                   <th>Animalito(s)</th>
                   <th>Monto</th>
                   <th>Estado</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {filtrados.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center text-muted">Sin tickets</td></tr>
+                  <tr><td colSpan={7} className="text-center text-muted">Sin tickets</td></tr>
                 ) : filtrados.map(t => (
                   <tr key={t.ticket_id} onClick={() => verDetalle(t.ticket_codigo)} style={{ cursor: 'pointer' }}>
                     <td className="bold">{t.ticket_codigo}</td>
@@ -131,6 +165,17 @@ export default function Tickets() {
                     <td className="bold text-primary">{fmt(t.monto)}</td>
                     <td>
                       <span className={`badge badge-${badgeClase(t.estado)}`}>{t.estado}</span>
+                    </td>
+                    <td>
+                      {puedeAnular(t) && (
+                        <button
+                          className="btn btn-danger btn-sm btn-inline"
+                          disabled={anulandoId === t.ticket_id}
+                          onClick={e => { e.stopPropagation(); handleAnular(t); }}
+                        >
+                          {anulandoId === t.ticket_id ? '...' : 'Anular'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

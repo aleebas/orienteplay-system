@@ -6,7 +6,10 @@ import {
   getReporteVentasPorVendedor,
   getUltimasVentas,
   getLimitesUso,
+  getTopAnimalitos,
+  getTopLoterias,
 } from '../api/cliente';
+import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import { fmt, horaVenezuela, hora12 } from '../utils/formato';
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
@@ -36,23 +39,29 @@ export default function Dashboard() {
   const [porVendedor, setPorVendedor] = useState([]);
   const [recientes, setRecientes] = useState([]);
   const [limitesUso, setLimitesUso] = useState([]);
+  const [topAnimalitos, setTopAnimalitos] = useState([]);
+  const [topLoterias, setTopLoterias] = useState([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
 
   const cargar = useCallback(async () => {
     const fecha = TODAY();
-    const [r1, r2, r3, r4, r5] = await Promise.allSettled([
+    const [r1, r2, r3, r4, r5, r6, r7] = await Promise.allSettled([
       caja?.id ? getResumenCaja(caja.id) : Promise.resolve(null),
       getReporteVentasPorLoteria(fecha),
       getReporteVentasPorVendedor(fecha),
       getUltimasVentas(10),
       getLimitesUso(),
+      getTopAnimalitos(fecha),
+      getTopLoterias(fecha),
     ]);
     if (r1.status === 'fulfilled') setResumen(r1.value);
     if (r2.status === 'fulfilled') setPorLoteria(r2.value || []);
     if (r3.status === 'fulfilled') setPorVendedor(r3.value || []);
     if (r4.status === 'fulfilled') setRecientes(r4.value || []);
     if (r5.status === 'fulfilled') setLimitesUso(r5.value || []);
+    if (r6.status === 'fulfilled') setTopAnimalitos(r6.value || []);
+    if (r7.status === 'fulfilled') setTopLoterias(r7.value || []);
     setLastUpdate(new Date());
   }, [caja?.id]);
 
@@ -140,6 +149,61 @@ export default function Dashboard() {
             </div>
           ))
         )}
+      </div>
+
+      {/* ── Top animalitos / Top loterías ── */}
+      <div className="dashboard-two-col">
+        <div className="card" style={{ marginBottom: 0 }}>
+          <h2>🐾 Top 5 animalitos — más apostado hoy</h2>
+          {topAnimalitos.length === 0 ? (
+            <p className="text-muted text-sm">Sin datos.</p>
+          ) : (
+            <div className="tabla-wrap">
+              <table className="tabla">
+                <thead>
+                  <tr>
+                    <th>Animalito</th>
+                    <th style={{ textAlign: 'right' }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topAnimalitos.map((a, i) => (
+                    <tr key={i}>
+                      <td>{EMOJI_MAP[a.nombre] || '🐾'} {a.numero} - {a.nombre}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(a.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="card" style={{ marginBottom: 0 }}>
+          <h2>🎰 Top 3 loterías — más ventas hoy</h2>
+          {topLoterias.length === 0 ? (
+            <p className="text-muted text-sm">Sin datos.</p>
+          ) : (
+            <div className="tabla-wrap">
+              <table className="tabla">
+                <thead>
+                  <tr>
+                    <th>Lotería</th>
+                    <th style={{ textAlign: 'right' }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topLoterias.map((l, i) => (
+                    <tr key={i}>
+                      <td>{l.loteria}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(l.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Fila 3: Dos columnas ── */}

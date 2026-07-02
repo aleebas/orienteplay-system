@@ -28,7 +28,7 @@ export function fechaCorta(isoStr) {
     }).formatToParts(d);
     const g = (t) => p.find(x => x.type === t)?.value ?? '';
     const period = (p.find(x => x.type === 'dayPeriod')?.value ?? '')
-      .replace(/\./g, '').toUpperCase();
+      .toUpperCase().replace(/[.\s]/g, '');
     return `${g('day')}/${g('month')}/${g('year')} ${g('hour')}:${g('minute')}${period}`;
   } catch {
     return d.toLocaleString('es-VE');

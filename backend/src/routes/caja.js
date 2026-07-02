@@ -17,7 +17,7 @@ router.get('/actual', (req, res) => {
 });
 
 router.post('/abrir', (req, res) => {
-  const { monto_inicial } = req.body;
+  const { monto_inicial, fondo_banco } = req.body;
   const yaAbierta = db.prepare(
     `SELECT id FROM cajas WHERE agencia_id = ? AND estado = 'abierta'`
   ).get(req.user.agencia_id);
@@ -27,8 +27,8 @@ router.post('/abrir', (req, res) => {
   }
 
   const r = db.prepare(
-    `INSERT INTO cajas (agencia_id, usuario_apertura_id, monto_inicial) VALUES (?, ?, ?)`
-  ).run(req.user.agencia_id, req.user.id, monto_inicial || 0);
+    `INSERT INTO cajas (agencia_id, usuario_apertura_id, monto_inicial, fondo_banco) VALUES (?, ?, ?, ?)`
+  ).run(req.user.agencia_id, req.user.id, monto_inicial || 0, fondo_banco || 0);
 
   res.json({ id: r.lastInsertRowid, mensaje: 'Caja abierta' });
 });
@@ -77,15 +77,33 @@ function calcularResumenCaja(cajaId) {
 
   const efectivoEsperado = (caja.monto_inicial || 0) + ventas.total - premiosPagados.total;
 
+  // Comision de operadora ganada por cada vendedor que vendio en esta caja,
+  // segun su comision_porcentaje configurado en usuarios.
+  const comisionesVendedores = db.prepare(
+    `SELECT u.id AS usuario_id, u.nombre, u.comision_porcentaje,
+            SUM(j.monto) AS monto_vendido
+     FROM jugadas j
+     JOIN usuarios u ON u.id = j.usuario_id
+     WHERE j.caja_id = ?
+     GROUP BY u.id
+     ORDER BY monto_vendido DESC`
+  ).all(cajaId).map(r => ({
+    ...r,
+    comision_ganada: Math.round(r.monto_vendido * r.comision_porcentaje / 100 * 100) / 100,
+  }));
+
   return {
     caja_id: Number(cajaId),
     estado: caja.estado,
     monto_inicial: caja.monto_inicial,
+    fondo_banco: caja.fondo_banco || 0,
+    total_disponible: (caja.monto_inicial || 0) + (caja.fondo_banco || 0),
     ventas_total: ventas.total,
     ventas_cantidad: ventas.cantidad,
     premios_pagados_total: premiosPagados.total,
     premios_pagados_cantidad: premiosPagados.cantidad,
     comision_estimada: Math.round(comisionTotal * 100) / 100,
+    comisiones_vendedores: comisionesVendedores,
     efectivo_esperado: efectivoEsperado,
     monto_final_declarado: caja.monto_final_declarado,
     diferencia: caja.monto_final_declarado != null ? caja.monto_final_declarado - efectivoEsperado : null,

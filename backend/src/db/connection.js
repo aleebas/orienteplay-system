@@ -19,10 +19,17 @@ db.exec(schema);
 
 // Migraciones idempotentes para bases ya creadas antes de este campo.
 // CREATE TABLE IF NOT EXISTS no agrega columnas a tablas existentes.
-try {
-  db.exec(`ALTER TABLE jugadas ADD COLUMN metodo_pago TEXT NOT NULL DEFAULT 'efectivo'`);
-} catch (err) {
-  if (!/duplicate column name/i.test(err.message)) throw err;
+const migraciones = [
+  `ALTER TABLE jugadas ADD COLUMN metodo_pago TEXT NOT NULL DEFAULT 'efectivo'`,
+  `ALTER TABLE usuarios ADD COLUMN comision_porcentaje REAL NOT NULL DEFAULT 14`,
+  `ALTER TABLE cajas ADD COLUMN fondo_banco REAL NOT NULL DEFAULT 0`,
+];
+for (const sql of migraciones) {
+  try {
+    db.exec(sql);
+  } catch (err) {
+    if (!/duplicate column name/i.test(err.message)) throw err;
+  }
 }
 
 module.exports = db;

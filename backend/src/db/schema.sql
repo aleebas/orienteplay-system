@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   usuario TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   rol TEXT NOT NULL CHECK (rol IN ('admin', 'vendedor')),
+  comision_porcentaje REAL NOT NULL DEFAULT 14,
   activo INTEGER NOT NULL DEFAULT 1,
   creado_en TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -131,6 +132,7 @@ CREATE TABLE IF NOT EXISTS cajas (
   usuario_cierre_id INTEGER REFERENCES usuarios(id),
   monto_inicial REAL NOT NULL DEFAULT 0,
   monto_final_declarado REAL,
+  fondo_banco REAL NOT NULL DEFAULT 0,
   estado TEXT NOT NULL DEFAULT 'abierta' CHECK (estado IN ('abierta', 'cerrada')),
   abierta_en TEXT NOT NULL DEFAULT (datetime('now')),
   cerrada_en TEXT

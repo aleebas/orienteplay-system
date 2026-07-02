@@ -10,6 +10,8 @@ import {
   desactivarLimite,
   getUsuarios,
   crearUsuario,
+  editarUsuario,
+  eliminarUsuario,
 } from '../api/cliente';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -41,9 +43,13 @@ export default function Reportes() {
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
-  const [formUsuario, setFormUsuario] = useState({ nombre: '', usuario: '', clave: '', rol: 'vendedor' });
+  const [formUsuario, setFormUsuario] = useState({ nombre: '', usuario: '', clave: '', rol: 'vendedor', comision_porcentaje: 14 });
   const [savingUsuario, setSavingUsuario] = useState(false);
   const [usuarioMsg, setUsuarioMsg] = useState('');
+  const [usuarioEditando, setUsuarioEditando] = useState(null);
+  const [formEditar, setFormEditar] = useState({ nombre: '', rol: 'vendedor', clave: '', comision_porcentaje: 14 });
+  const [savingEditar, setSavingEditar] = useState(false);
+  const [editarMsg, setEditarMsg] = useState('');
 
   useEffect(() => {
     cargarReportes();
@@ -124,12 +130,49 @@ export default function Reportes() {
     try {
       await crearUsuario(formUsuario);
       setUsuarioMsg('Usuario creado');
-      setFormUsuario({ nombre: '', usuario: '', clave: '', rol: 'vendedor' });
+      setFormUsuario({ nombre: '', usuario: '', clave: '', rol: 'vendedor', comision_porcentaje: 14 });
       cargarUsuarios();
     } catch (err) {
       setUsuarioMsg('Error: ' + err.message);
     } finally {
       setSavingUsuario(false);
+    }
+  }
+
+  function abrirEditar(u) {
+    setUsuarioEditando(u);
+    setFormEditar({ nombre: u.nombre, rol: u.rol, clave: '', comision_porcentaje: u.comision_porcentaje ?? 14 });
+    setEditarMsg('');
+  }
+
+  async function handleGuardarEdicion(e) {
+    e.preventDefault();
+    setSavingEditar(true);
+    setEditarMsg('');
+    try {
+      const payload = {
+        nombre: formEditar.nombre,
+        rol: formEditar.rol,
+        comision_porcentaje: formEditar.comision_porcentaje,
+      };
+      if (formEditar.clave) payload.clave = formEditar.clave;
+      await editarUsuario(usuarioEditando.id, payload);
+      setUsuarioEditando(null);
+      cargarUsuarios();
+    } catch (err) {
+      setEditarMsg('Error: ' + err.message);
+    } finally {
+      setSavingEditar(false);
+    }
+  }
+
+  async function handleEliminarUsuario(u) {
+    if (!confirm(`¿Eliminar al usuario "${u.nombre}"?`)) return;
+    try {
+      await eliminarUsuario(u.id);
+      cargarUsuarios();
+    } catch (err) {
+      alert('Error: ' + err.message);
     }
   }
 
@@ -252,16 +295,18 @@ export default function Reportes() {
                   <th>Vendedor</th>
                   <th>Jugadas</th>
                   <th>Total</th>
+                  <th>Comisión</th>
                 </tr>
               </thead>
               <tbody>
                 {dataVendedor.length === 0 ? (
-                  <tr><td colSpan={3} className="text-center text-muted">Sin datos</td></tr>
+                  <tr><td colSpan={4} className="text-center text-muted">Sin datos</td></tr>
                 ) : dataVendedor.map((r, i) => (
                   <tr key={i}>
                     <td>{r.vendedor}</td>
                     <td>{r.cantidad_jugadas}</td>
                     <td className="bold text-primary">{fmt(r.total_vendido)}</td>
+                    <td className="bold text-success">{fmt(r.comision_ganada)} <span className="text-muted text-sm">({r.comision_porcentaje}%)</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -419,6 +464,18 @@ export default function Reportes() {
                   <option value="admin">Admin</option>
                 </select>
               </div>
+              <div className="field">
+                <label>Comisión %</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={formUsuario.comision_porcentaje}
+                  onChange={e => setFormUsuario(f => ({ ...f, comision_porcentaje: e.target.value }))}
+                  placeholder="14"
+                />
+              </div>
               <button
                 type="submit"
                 className="btn btn-primary"
@@ -441,7 +498,9 @@ export default function Reportes() {
                       <th>Nombre</th>
                       <th>Usuario</th>
                       <th>Rol</th>
+                      <th>Comisión</th>
                       <th>Estado</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -454,7 +513,18 @@ export default function Reportes() {
                             {u.rol}
                           </span>
                         </td>
+                        <td>{u.comision_porcentaje}%</td>
                         <td>{u.activo ? 'Activo' : 'Inactivo'}</td>
+                        <td className="flex gap-8">
+                          <button className="btn btn-outline btn-sm btn-inline" onClick={() => abrirEditar(u)}>
+                            Editar
+                          </button>
+                          {u.id !== auth?.user?.id && (
+                            <button className="btn btn-danger btn-sm btn-inline" onClick={() => handleEliminarUsuario(u)}>
+                              Eliminar
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -462,6 +532,60 @@ export default function Reportes() {
               </div>
             )}
           </div>
+
+          {usuarioEditando && (
+            <div className="dialog-overlay" onClick={() => setUsuarioEditando(null)}>
+              <div className="dialog" onClick={e => e.stopPropagation()}>
+                <h2>Editar usuario</h2>
+                {editarMsg && <div className="alert alert-danger">{editarMsg}</div>}
+                <form onSubmit={handleGuardarEdicion}>
+                  <div className="field">
+                    <label>Nombre</label>
+                    <input
+                      type="text"
+                      value={formEditar.nombre}
+                      onChange={e => setFormEditar(f => ({ ...f, nombre: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Rol</label>
+                    <select value={formEditar.rol} onChange={e => setFormEditar(f => ({ ...f, rol: e.target.value }))}>
+                      <option value="vendedor">Vendedor</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Comisión %</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={formEditar.comision_porcentaje}
+                      onChange={e => setFormEditar(f => ({ ...f, comision_porcentaje: e.target.value }))}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Nueva clave (opcional — dejar vacío para no cambiarla)</label>
+                    <input
+                      type="password"
+                      value={formEditar.clave}
+                      onChange={e => setFormEditar(f => ({ ...f, clave: e.target.value }))}
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <div className="dialog-actions">
+                    <button type="button" className="btn btn-outline" onClick={() => setUsuarioEditando(null)}>
+                      Cancelar
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={savingEditar}>
+                      {savingEditar ? 'Guardando...' : 'Guardar cambios'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

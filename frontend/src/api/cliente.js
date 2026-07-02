@@ -35,8 +35,8 @@ export const getCatalogoLoterias = () =>
 export const getCajaActual = () =>
   req('GET', '/caja/actual');
 
-export const abrirCaja = (monto_inicial) =>
-  req('POST', '/caja/abrir', { monto_inicial });
+export const abrirCaja = (monto_inicial, fondo_banco) =>
+  req('POST', '/caja/abrir', { monto_inicial, fondo_banco });
 
 export const cerrarCaja = (id, monto_final_declarado) =>
   req('POST', `/caja/${id}/cerrar`, { monto_final_declarado });
@@ -64,6 +64,9 @@ export const getTickets = ({ fecha, estado, q } = {}) => {
   const qs = params.toString();
   return req('GET', `/jugadas${qs ? `?${qs}` : ''}`);
 };
+
+export const anularVenta = (codigoVenta) =>
+  req('POST', `/jugadas/anular/${codigoVenta}`);
 
 export const cargarResultado = (sorteo_id, animalito_id, fecha) =>
   req('POST', '/resultados', { sorteo_id, animalito_id, fecha });
@@ -104,11 +107,23 @@ export const getUltimasVentas = (limite = 10) =>
 export const getLimitesUso = () =>
   req('GET', '/reportes/limites-uso');
 
+export const getTopAnimalitos = (fecha) =>
+  req('GET', `/reportes/top-animalitos${fecha ? `?fecha=${fecha}` : ''}`);
+
+export const getTopLoterias = (fecha) =>
+  req('GET', `/reportes/top-loterias${fecha ? `?fecha=${fecha}` : ''}`);
+
 export const getUsuarios = () =>
   req('GET', '/usuarios');
 
 export const crearUsuario = (payload) =>
   req('POST', '/usuarios', payload);
+
+export const editarUsuario = (id, payload) =>
+  req('PATCH', `/usuarios/${id}`, payload);
+
+export const eliminarUsuario = (id) =>
+  req('DELETE', `/usuarios/${id}`);
 
 export const imprimirTicket = (ventaData, agenciaNombre) =>
   req('POST', '/imprimir', { venta: ventaData.venta, jugadas: ventaData.jugadas, agenciaNombre });
