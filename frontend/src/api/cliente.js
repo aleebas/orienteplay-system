@@ -56,6 +56,15 @@ export const getVenta = (codigo) =>
 export const getTicket = (codigo) =>
   req('GET', `/jugadas/ticket/${codigo}`);
 
+export const getTickets = ({ fecha, estado, q } = {}) => {
+  const params = new URLSearchParams();
+  if (fecha) params.set('fecha', fecha);
+  if (estado) params.set('estado', estado);
+  if (q) params.set('q', q);
+  const qs = params.toString();
+  return req('GET', `/jugadas${qs ? `?${qs}` : ''}`);
+};
+
 export const cargarResultado = (sorteo_id, animalito_id, fecha) =>
   req('POST', '/resultados', { sorteo_id, animalito_id, fecha });
 

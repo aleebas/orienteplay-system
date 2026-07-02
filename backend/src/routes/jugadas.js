@@ -95,6 +95,48 @@ function validarJugada({ agenciaId, sorteoId, modoJuegoId, animalitoIds, monto, 
   return { ok: true, sorteo, modo, revisiones, conAlerta };
 }
 
+// Lista de tickets del dia con filtros (para la pantalla de Tickets)
+router.get('/', (req, res) => {
+  const { fecha, estado, q } = req.query;
+  const f = fecha || new Date().toISOString().slice(0, 10);
+
+  let where = `j.agencia_id = ? AND j.fecha_sorteo = ?`;
+  const params = [req.user.agencia_id, f];
+
+  if (estado && estado !== 'todos') {
+    where += ` AND t.estado = ?`;
+    params.push(estado);
+  }
+  if (q) {
+    where += ` AND t.codigo LIKE ?`;
+    params.push(`%${q}%`);
+  }
+
+  const rows = db.prepare(`
+    SELECT
+      t.id AS ticket_id,
+      t.codigo AS ticket_codigo,
+      t.estado,
+      j.creada_en,
+      j.monto,
+      j.metodo_pago,
+      l.nombre AS loteria_nombre,
+      s.hora AS sorteo_hora,
+      GROUP_CONCAT(a.numero || '-' || a.nombre, ', ') AS animalitos
+    FROM jugadas j
+    JOIN tickets t ON t.jugada_id = j.id
+    JOIN sorteos s ON s.id = j.sorteo_id
+    JOIN loterias l ON l.id = s.loteria_id
+    JOIN jugada_animalitos ja ON ja.jugada_id = j.id
+    JOIN animalitos a ON a.id = ja.animalito_id
+    WHERE ${where}
+    GROUP BY j.id
+    ORDER BY j.creada_en DESC
+  `).all(...params);
+
+  res.json(rows);
+});
+
 router.post('/validar', (req, res) => {
   const lista = req.body.jugadas || [req.body];
   const fechaDefault = new Date().toISOString().slice(0, 10);
@@ -116,8 +158,11 @@ router.post('/validar', (req, res) => {
   res.json({ permitido: !algunError, resultados });
 });
 
+const METODOS_PAGO = ['efectivo', 'pago_movil', 'biopago'];
+
 router.post('/', (req, res) => {
   const { caja_id, cliente_nombre, cliente_telefono, forzar_aunque_alerte } = req.body;
+  const metodoPago = METODOS_PAGO.includes(req.body.metodo_pago) ? req.body.metodo_pago : 'efectivo';
   const lista = req.body.jugadas || [{
     sorteo_id: req.body.sorteo_id,
     modo_juego_id: req.body.modo_juego_id,
@@ -181,9 +226,9 @@ router.post('/', (req, res) => {
       const fecha = v.fecha;
 
       const jugadaResult = db.prepare(
-        `INSERT INTO jugadas (venta_id, agencia_id, caja_id, usuario_id, sorteo_id, modo_juego_id, fecha_sorteo, cliente_nombre, cliente_telefono, monto)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(ventaId, req.user.agencia_id, caja_id, req.user.id, j.sorteo_id, j.modo_juego_id, fecha, cliente_nombre || null, cliente_telefono || null, j.monto);
+        `INSERT INTO jugadas (venta_id, agencia_id, caja_id, usuario_id, sorteo_id, modo_juego_id, fecha_sorteo, cliente_nombre, cliente_telefono, monto, metodo_pago)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(ventaId, req.user.agencia_id, caja_id, req.user.id, j.sorteo_id, j.modo_juego_id, fecha, cliente_nombre || null, cliente_telefono || null, j.monto, metodoPago);
       const jugadaId = jugadaResult.lastInsertRowid;
 
       const insertAnimalito = db.prepare(

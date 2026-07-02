@@ -17,4 +17,12 @@ const schemaPath = path.join(__dirname, 'schema.sql');
 const schema = fs.readFileSync(schemaPath, 'utf-8');
 db.exec(schema);
 
+// Migraciones idempotentes para bases ya creadas antes de este campo.
+// CREATE TABLE IF NOT EXISTS no agrega columnas a tablas existentes.
+try {
+  db.exec(`ALTER TABLE jugadas ADD COLUMN metodo_pago TEXT NOT NULL DEFAULT 'efectivo'`);
+} catch (err) {
+  if (!/duplicate column name/i.test(err.message)) throw err;
+}
+
 module.exports = db;

@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS jugadas (
   cliente_nombre TEXT,
   cliente_telefono TEXT,
   monto REAL NOT NULL,
+  metodo_pago TEXT NOT NULL DEFAULT 'efectivo' CHECK (metodo_pago IN ('efectivo', 'pago_movil', 'biopago')),
   creada_en TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

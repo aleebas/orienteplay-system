@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getCatalogoLoterias, getResultadosFecha, cargarResultado } from '../api/cliente';
-import SelectorAnimalito, { EMOJI_MAP } from '../components/SelectorAnimalito';
+import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import { hora12 } from '../utils/formato';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -103,6 +103,7 @@ export default function Resultados() {
               seleccionados={animalito ? [animalito] : []}
               cantidad={1}
               onSelect={a => setAnimalito(prev => prev?.id === a.id ? null : a)}
+              loteriaSlug={LOTERIA_SLUG_IMAGEN[sorteoSelec.loteria?.slug]}
             />
             <div className="dialog-actions">
               <button className="btn btn-outline" onClick={() => { setSorteoSelec(null); setAnimalito(null); }}>

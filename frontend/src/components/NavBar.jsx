@@ -30,6 +30,7 @@ export default function NavBar() {
     { to: '/caja',       label: '💰 Caja' },
     { to: '/resultados', label: '🏆 Resultados' },
     { to: '/pagos',      label: '💵 Pagos' },
+    { to: '/tickets',    label: '🎫 Tickets' },
     ...(isAdmin ? [{ to: '/reportes', label: '📋 Reportes' }] : []),
   ];
 

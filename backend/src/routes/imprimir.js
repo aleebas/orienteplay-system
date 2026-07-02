@@ -13,6 +13,12 @@ router.use(requireAuth);
 const SEP = '--------------------------------';
 const SEP2 = '================================';
 
+const METODO_PAGO_LABEL = {
+  efectivo: 'EFECTIVO',
+  pago_movil: 'PAGO MOVIL',
+  biopago: 'BIOPAGO',
+};
+
 router.post('/', (req, res) => {
   const { venta, jugadas, agenciaNombre } = req.body;
   if (!venta || !Array.isArray(jugadas)) {
@@ -36,6 +42,7 @@ router.post('/', (req, res) => {
     try {
       const totalMonto = jugadas.reduce((s, j) => s + j.monto, 0);
       const bloques = agruparJugadasParaTicket(jugadas);
+      const metodoPago = METODO_PAGO_LABEL[jugadas[0]?.metodo_pago] || 'EFECTIVO';
 
       printer
         .align('ct')
@@ -56,6 +63,7 @@ router.post('/', (req, res) => {
 
       printer
         .style('b').text(`MON: ${fmtTicket(totalMonto)}(Bs)  JUG: ${jugadas.length}`).style('normal')
+        .text(`PAGO: ${metodoPago}`)
         .text('CADUCA A LOS 3 DIAS')
         .text(SEP2)
         .cut()

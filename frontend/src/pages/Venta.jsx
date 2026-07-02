@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket } from '../api/cliente';
-import SelectorAnimalito, { EMOJI_MAP } from '../components/SelectorAnimalito';
+import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
 import { hora12, fmt } from '../utils/formato';
@@ -53,6 +53,7 @@ export default function Venta() {
   const [carrito, setCarrito] = useState([]);
   const [clienteNombre, setClienteNombre] = useState('');
   const [clienteTelefono, setClienteTelefono] = useState('');
+  const [metodoPago, setMetodoPago] = useState('efectivo');
 
   const [loadingAgregar, setLoadingAgregar] = useState(false);
   const [loadingConfirmar, setLoadingConfirmar] = useState(false);
@@ -266,6 +267,7 @@ export default function Venta() {
       cliente_nombre: clienteNombre || undefined,
       cliente_telefono: clienteTelefono || undefined,
       forzar_aunque_alerte: forzar,
+      metodo_pago: metodoPago,
       jugadas: carrito.map(item => ({
         sorteo_id: item.sorteo_id, modo_juego_id: item.modo_juego_id,
         animalito_ids: item.animalito_ids, monto: item.monto, fecha_sorteo: item.fecha_sorteo,
@@ -496,6 +498,7 @@ export default function Venta() {
                         cantidad={1}
                         onSelect={toggleAnimMulti}
                         limitarSeleccion={false}
+                        loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
                       />
                     </div>
 
@@ -563,6 +566,7 @@ export default function Venta() {
                       cantidad={3}
                       onSelect={toggleAnimTripleta}
                       limitarSeleccion={true}
+                      loteriaSlug={LOTERIA_SLUG_IMAGEN[loteria.slug]}
                     />
                     {animTripleta.length === 3 && (
                       <div className="field mt-8">
@@ -630,6 +634,15 @@ export default function Venta() {
               <div className="field">
                 <label>Teléfono WhatsApp (opcional)</label>
                 <input type="tel" value={clienteTelefono} onChange={e => setClienteTelefono(e.target.value)} placeholder="04121234567" style={{ minHeight: 40 }} />
+              </div>
+
+              <div className="field">
+                <label>Forma de pago</label>
+                <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="pago_movil">Pago Móvil</option>
+                  <option value="biopago">Biopago</option>
+                </select>
               </div>
 
               {error && !loadingAgregar && <div className="alert alert-danger">{error}</div>}

@@ -7,6 +7,12 @@ import {
 const SEP = '--------------------------------';
 const SEP2 = '================================';
 
+const METODO_PAGO_LABEL = {
+  efectivo: 'EFECTIVO',
+  pago_movil: 'PAGO MOVIL',
+  biopago: 'BIOPAGO',
+};
+
 function L({ children, bold, faint, center }) {
   return (
     <div style={{
@@ -26,17 +32,18 @@ const Comprobante = forwardRef(function Comprobante({ ventaData, agenciaNombre }
   const { venta, jugadas } = ventaData;
   const totalMonto = jugadas.reduce((s, j) => s + j.monto, 0);
   const bloques = agruparJugadasParaTicket(jugadas);
+  const metodoPago = METODO_PAGO_LABEL[jugadas[0]?.metodo_pago] || 'EFECTIVO';
 
   return (
-    <div ref={ref} className="comprobante">
-      {/* Header compacto: Logo izq + Texto derecha */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'flex-start' }}>
+    <div ref={ref} className="comprobante" style={{ maxWidth: 320 }}>
+      {/* Header: una sola columna centrada */}
+      <div style={{ textAlign: 'center', marginBottom: '8px' }}>
         <img
           src="/ORIENTEPLAY_LOGO.png"
           alt="OrientePlay"
-          style={{ height: '28px', objectFit: 'contain', flexShrink: 0 }}
+          style={{ height: '28px', objectFit: 'contain', margin: '0 auto 4px' }}
         />
-        <div style={{ flex: 1, fontSize: '0.7rem', fontFamily: "'Courier New', monospace", lineHeight: 1.4 }}>
+        <div style={{ fontSize: '0.7rem', fontFamily: "'Courier New', monospace", lineHeight: 1.4 }}>
           <div style={{ fontWeight: 700 }}>ORIENTE PLAY</div>
           <div>{(agenciaNombre || 'MI AGENCIA').toUpperCase()}</div>
           <div>TCK# {venta.codigo}</div>
@@ -59,6 +66,7 @@ const Comprobante = forwardRef(function Comprobante({ ventaData, agenciaNombre }
       })}
 
       <L bold>MON: {fmtTicket(totalMonto)}(Bs)  JUG: {jugadas.length}</L>
+      <L>PAGO: {metodoPago}</L>
       <L>CADUCA A LOS 3 DIAS</L>
       <L faint>{SEP2}</L>
     </div>
