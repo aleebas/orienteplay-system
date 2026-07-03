@@ -526,6 +526,31 @@ small { font-size: 0.8rem; color: var(--text-muted); }
 .badge-muted   { background: #f0f0f0; color: var(--text-muted); }
 .badge-accent  { background: var(--accent-light); color: var(--accent-dark); }
 
+/* ── Badge de estado de ticket ── */
+.badge-estado-pendiente { background: #f0f0f0; color: var(--text-muted); }
+.badge-estado-ganador {
+  background: var(--success-light);
+  color: var(--success);
+  animation: pulse-ganador 1.3s ease-in-out infinite;
+}
+.badge-estado-pagado { background: #1b5e35; color: #fff; }
+.badge-estado-perdedor { background: var(--danger-light); color: var(--danger); opacity: 0.8; }
+.badge-estado-anulado { background: #f0f0f0; color: var(--text-muted); text-decoration: line-through; }
+
+@keyframes pulse-ganador {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(39, 174, 96, 0); }
+}
+
+.premio-pagado-box {
+  background: #1b5e35;
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.premio-pagado-box .text-sm { color: rgba(255,255,255,0.85); margin-top: 2px; }
+
 /* ── Tables ── */
 .tabla-wrap { overflow-x: auto; }
 .tabla { width: 100%; border-collapse: collapse; font-size: 0.875rem; }

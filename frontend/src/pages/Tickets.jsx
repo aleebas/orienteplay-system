@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado } from '../api/cliente';
+import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado, pagarPremio } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import { hora12, fmt, horaVenezuela } from '../utils/formato';
+import { useAuth } from '../context/AuthContext';
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const MINUTOS_LIMITE_ANULACION = 20;
@@ -32,15 +33,17 @@ const ESTADOS = [
 
 function badgeClase(estado) {
   return {
-    ganador: 'success',
-    pagado: 'muted',
-    perdedor: 'danger',
-    anulado: 'warning',
-  }[estado] || 'info';
+    pendiente: 'badge-estado-pendiente',
+    ganador: 'badge-estado-ganador',
+    pagado: 'badge-estado-pagado',
+    perdedor: 'badge-estado-perdedor',
+    anulado: 'badge-estado-anulado',
+  }[estado] || 'badge-estado-pendiente';
 }
 
 export default function Tickets() {
   const navigate = useNavigate();
+  const { caja } = useAuth();
   const [vista, setVista] = useState('tickets');
 
   const [lista, setLista] = useState([]);
@@ -55,6 +58,9 @@ export default function Tickets() {
 
   const [anulandoVenta, setAnulandoVenta] = useState(null);
   const [errorAnular, setErrorAnular] = useState('');
+
+  const [pagandoPremio, setPagandoPremio] = useState(false);
+  const [errorPagar, setErrorPagar] = useState('');
 
   const [creditos, setCreditos] = useState([]);
   const [loadingCreditos, setLoadingCreditos] = useState(true);
@@ -138,6 +144,7 @@ export default function Tickets() {
 
   async function verDetalle(codigo) {
     setErrorDetalle('');
+    setErrorPagar('');
     setLoadingDetalle(true);
     try {
       setTicketDetalle(await getTicket(codigo));
@@ -145,6 +152,24 @@ export default function Tickets() {
       setErrorDetalle(err.message || 'No se pudo cargar el ticket');
     } finally {
       setLoadingDetalle(false);
+    }
+  }
+
+  async function handlePagarPremio() {
+    if (!ticketDetalle || !caja?.id) return;
+    setErrorPagar('');
+    setPagandoPremio(true);
+    try {
+      await pagarPremio(ticketDetalle.ticket.codigo, caja.id);
+      const actualizado = await getTicket(ticketDetalle.ticket.codigo);
+      setTicketDetalle(actualizado);
+      setLista(prev => prev.map(t =>
+        t.ticket_codigo === actualizado.ticket.codigo ? { ...t, estado: actualizado.ticket.estado } : t
+      ));
+    } catch (err) {
+      setErrorPagar(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : (err.message || 'No se pudo pagar el premio'));
+    } finally {
+      setPagandoPremio(false);
     }
   }
 
@@ -286,7 +311,7 @@ export default function Tickets() {
                     <td>{t.animalitos}</td>
                     <td className="bold text-primary">{fmt(t.monto)}</td>
                     <td>
-                      <span className={`badge badge-${badgeClase(t.estado)}`}>{t.estado}</span>
+                      <span className={`badge ${badgeClase(t.estado)}`}>{t.estado}</span>
                     </td>
                     <td>
                       {puedeAnular(t) && (
@@ -309,11 +334,11 @@ export default function Tickets() {
       )}
 
       {(ticketDetalle || loadingDetalle || errorDetalle) && (
-        <div className="dialog-overlay" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); }}>
+        <div className="dialog-overlay" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); setErrorPagar(''); }}>
           <div className="dialog" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between align-center mb-12">
               <h2>Detalle del Ticket</h2>
-              <button className="btn btn-sm btn-inline btn-outline" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); }}>✕</button>
+              <button className="btn btn-sm btn-inline btn-outline" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); setErrorPagar(''); }}>✕</button>
             </div>
 
             {loadingDetalle && <div className="loading"><div className="spinner"></div></div>}
@@ -322,7 +347,7 @@ export default function Tickets() {
             {ticketDetalle && !loadingDetalle && (
               <>
                 <div style={{ marginBottom: 12 }}>
-                  <span className={`badge badge-${badgeClase(ticketDetalle.ticket.estado)}`} style={{ fontSize: '0.9rem', padding: '4px 12px' }}>
+                  <span className={`badge ${badgeClase(ticketDetalle.ticket.estado)}`} style={{ fontSize: '0.9rem', padding: '4px 12px' }}>
                     {ticketDetalle.ticket.estado.toUpperCase()}
                   </span>
                 </div>
@@ -372,15 +397,33 @@ export default function Tickets() {
                 )}
 
                 {ticketDetalle.ticket.estado === 'pagado' && ticketDetalle.pago && (
-                  <div className="alert alert-info">
-                    Pagado el {horaVenezuela(ticketDetalle.pago.pagado_en)}<br />
-                    Monto: {fmt(ticketDetalle.pago.monto_pagado)}
+                  <div className="premio-pagado-box">
+                    <div className="bold">Premio pagado ✓</div>
+                    <div className="text-sm">
+                      {horaVenezuela(ticketDetalle.pago.pagado_en)} · {fmt(ticketDetalle.pago.monto_pagado)}
+                    </div>
                   </div>
                 )}
                 {ticketDetalle.ticket.estado === 'ganador' && (
-                  <div className="alert alert-success">
-                    🏆 Premio a pagar: {fmt(ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador)}
-                  </div>
+                  <>
+                    <div className="alert alert-success">
+                      🏆 Premio a pagar: {fmt(ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador)}
+                    </div>
+                    {!caja && (
+                      <div className="alert alert-warning">No hay caja abierta. Abre una caja para pagar premios.</div>
+                    )}
+                    {errorPagar && <div className="alert alert-danger">{errorPagar}</div>}
+                    <button
+                      className="btn btn-success"
+                      style={{ width: '100%', marginBottom: 12 }}
+                      onClick={handlePagarPremio}
+                      disabled={pagandoPremio || !caja}
+                    >
+                      {pagandoPremio
+                        ? 'Procesando...'
+                        : `💰 Pagar premio — ${fmt(ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador)}`}
+                    </button>
+                  </>
                 )}
                 {ticketDetalle.ticket.estado === 'perdedor' && (
                   <div className="alert alert-danger">Este ticket no resultó ganador.</div>
