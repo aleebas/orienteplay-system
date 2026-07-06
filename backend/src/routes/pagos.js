@@ -13,7 +13,7 @@ router.use(requireAuth);
 // dos vendedores intenten pagarlo casi al mismo tiempo.
 // ------------------------------------------------------------
 router.post('/:codigoTicket', (req, res) => {
-  const { caja_id } = req.body;
+  const { caja_id, banco_beneficiario, cedula_beneficiario, telefono_beneficiario, nombre_beneficiario } = req.body;
   if (!caja_id) return res.status(400).json({ error: 'caja_id es requerido' });
 
   const ticket = db.prepare(`SELECT * FROM tickets WHERE codigo = ?`).get(req.params.codigoTicket);
@@ -36,8 +36,12 @@ router.post('/:codigoTicket', (req, res) => {
     const pagar = db.transaction(() => {
       // El UNIQUE(ticket_id) en pagos_premio lanza error si ya existe -> doble seguridad
       db.prepare(
-        `INSERT INTO pagos_premio (ticket_id, monto_pagado, pagado_por, caja_id) VALUES (?, ?, ?, ?)`
-      ).run(ticket.id, montoPremio, req.user.id, caja_id);
+        `INSERT INTO pagos_premio (ticket_id, monto_pagado, pagado_por, caja_id, banco_beneficiario, cedula_beneficiario, telefono_beneficiario, nombre_beneficiario)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        ticket.id, montoPremio, req.user.id, caja_id,
+        banco_beneficiario || null, cedula_beneficiario || null, telefono_beneficiario || null, nombre_beneficiario || null
+      );
 
       db.prepare(`UPDATE tickets SET estado = 'pagado' WHERE id = ?`).run(ticket.id);
     });

@@ -24,6 +24,13 @@ const migraciones = [
   `ALTER TABLE usuarios ADD COLUMN comision_porcentaje REAL NOT NULL DEFAULT 14`,
   `ALTER TABLE cajas ADD COLUMN fondo_banco REAL NOT NULL DEFAULT 0`,
   `ALTER TABLE usuarios ADD COLUMN puede_confirmar_resultados INTEGER NOT NULL DEFAULT 0`,
+  // Datos del beneficiario para el flujo de notificacion por WhatsApp de
+  // pagos digitales (pago_movil/biopago) -- opcionales, solo se llenan
+  // cuando el metodo de pago original de la jugada no es efectivo.
+  `ALTER TABLE pagos_premio ADD COLUMN banco_beneficiario TEXT`,
+  `ALTER TABLE pagos_premio ADD COLUMN cedula_beneficiario TEXT`,
+  `ALTER TABLE pagos_premio ADD COLUMN telefono_beneficiario TEXT`,
+  `ALTER TABLE pagos_premio ADD COLUMN nombre_beneficiario TEXT`,
 ];
 for (const sql of migraciones) {
   try {

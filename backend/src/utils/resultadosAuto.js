@@ -234,6 +234,19 @@ async function ejecutarChequeo(sorteo, fecha, intento) {
     fuente = 'lotoven';
   }
 
+  // Re-chequear DESPUES del fetch (que puede tardar varios segundos):
+  // si mientras tanto un admin cargo el resultado manualmente, no hay
+  // que escribir (ni revivir) un candidato -- ese resultado manual ya
+  // resolvio cualquier candidato pendiente para este sorteo/fecha, y
+  // sin este re-chequeo guardarCandidato() lo pisaria de vuelta a
+  // 'pendiente_confirmacion'/'agotado' via su ON CONFLICT, dejando una
+  // alerta fantasma que ningun refresco del panel volveria a limpiar
+  // (el chequeo de "yaHayCandidato" al inicio de la funcion solo corre
+  // en el PROXIMO intento, que nunca llega porque este intento retorna).
+  if (db.prepare(`SELECT id FROM resultados WHERE sorteo_id = ? AND fecha = ?`).get(sorteo.id, fecha)) {
+    return;
+  }
+
   if (encontrado) {
     // ElSevero trae el numero del animalito -- buscar por numero es mas
     // confiable que por nombre (evita mismatches de tildes/mayusculas).

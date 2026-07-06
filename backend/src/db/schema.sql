@@ -245,6 +245,18 @@ CREATE TABLE IF NOT EXISTS comisiones (
 );
 
 -- ----------------------------------------------------------
+-- CONFIGURACION: pares clave/valor para ajustes globales del
+-- sistema (ej. numero de WhatsApp del responsable de pagos
+-- digitales). Genérica a propósito para no requerir una migración
+-- de esquema nueva cada vez que se agregue un ajuste más.
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS configuracion (
+  clave TEXT PRIMARY KEY,
+  valor TEXT,
+  actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ----------------------------------------------------------
 -- Indices para acelerar las consultas mas frecuentes
 -- ----------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_jugadas_sorteo_fecha ON jugadas(sorteo_id, fecha_sorteo);

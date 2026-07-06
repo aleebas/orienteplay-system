@@ -24,7 +24,7 @@ router.post('/', requireAdmin, (req, res) => {
 // ------------------------------------------------------------
 router.get('/:agenciaId/limites', requireAdmin, (req, res) => {
   const limites = db.prepare(
-    `SELECT la.*, a.nombre AS animalito_nombre, a.numero AS animalito_numero, l.nombre AS loteria_nombre, s.hora AS sorteo_hora
+    `SELECT la.*, a.nombre AS animalito_nombre, a.numero AS animalito_numero, l.id AS loteria_id, l.nombre AS loteria_nombre, s.hora AS sorteo_hora
      FROM limites_apuesta la
      JOIN animalitos a ON a.id = la.animalito_id
      JOIN loterias l ON l.id = a.loteria_id
@@ -57,6 +57,30 @@ router.post('/:agenciaId/limites', requireAdmin, (req, res) => {
 router.delete('/limites/:limiteId', requireAdmin, (req, res) => {
   db.prepare(`UPDATE limites_apuesta SET activo = 0 WHERE id = ?`).run(req.params.limiteId);
   res.json({ mensaje: 'Limite desactivado' });
+});
+
+// Desactiva todos los limites de UNA loteria (?loteria_id=X requerido)
+// para la agencia. Soft delete (activo = 0), igual que el borrado
+// individual de arriba. Para borrar TODOS los limites de la agencia sin
+// distinguir loteria, ver DELETE /:agenciaId/limites/todos mas abajo.
+router.delete('/:agenciaId/limites', requireAdmin, (req, res) => {
+  const { loteria_id } = req.query;
+  if (!loteria_id) {
+    return res.status(400).json({ error: 'loteria_id es requerido (usa /limites/todos para borrar todos sin filtrar)' });
+  }
+  const r = db.prepare(
+    `UPDATE limites_apuesta SET activo = 0
+     WHERE agencia_id = ? AND activo = 1
+       AND animalito_id IN (SELECT id FROM animalitos WHERE loteria_id = ?)`
+  ).run(req.params.agenciaId, loteria_id);
+  res.json({ mensaje: 'Limites de la loteria desactivados', cantidad: r.changes });
+});
+
+router.delete('/:agenciaId/limites/todos', requireAdmin, (req, res) => {
+  const r = db.prepare(
+    `UPDATE limites_apuesta SET activo = 0 WHERE agencia_id = ? AND activo = 1`
+  ).run(req.params.agenciaId);
+  res.json({ mensaje: 'Todos los limites de la agencia fueron desactivados', cantidad: r.changes });
 });
 
 module.exports = router;

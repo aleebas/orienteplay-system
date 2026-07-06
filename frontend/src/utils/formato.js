@@ -11,6 +11,34 @@ export function fechaHoyVenezuela() {
   return `${g('year')}-${g('month')}-${g('day')}`;
 }
 
+// Mensaje de WhatsApp para notificar al responsable de pagos digitales
+// cuando un premio se paga por Pago Móvil o Biopago. `jugada` y `ticket`
+// son el shape que devuelve GET /jugadas/ticket/:codigo.
+export function buildMensajePagoDigital({ ticket, jugada, montoPremio, beneficiario }) {
+  const metodoLabel = { pago_movil: 'Pago Móvil', biopago: 'Biopago' }[jugada.metodo_pago] || jugada.metodo_pago;
+  return [
+    '🏦 *PAGO DE PREMIO DIGITAL*',
+    `Ticket: ${ticket.codigo}`,
+    `Lotería: ${jugada.loteria_nombre} — ${hora12(jugada.sorteo_hora)}`,
+    `Monto del premio: ${fmt(montoPremio)}`,
+    `Método: ${metodoLabel}`,
+    '',
+    '*Datos del beneficiario:*',
+    `Banco: ${beneficiario.banco || '-'}`,
+    `Cédula: ${beneficiario.cedula || '-'}`,
+    `Teléfono: ${beneficiario.telefono || '-'}`,
+    `Nombre: ${beneficiario.nombre || '-'}`,
+  ].join('\n');
+}
+
+export function abrirWhatsAppPagoDigital({ ticket, jugada, montoPremio, beneficiario, whatsappDestino }) {
+  const texto = buildMensajePagoDigital({ ticket, jugada, montoPremio, beneficiario });
+  const url = whatsappDestino
+    ? `https://wa.me/${whatsappDestino.replace(/\D/g, '')}?text=${encodeURIComponent(texto)}`
+    : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+  window.open(url, '_blank');
+}
+
 export function hora12(horaStr) {
   if (!horaStr) return '';
   const [hh, mm] = horaStr.split(':').map(Number);

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getGanadoresPendientes, getTicket, pagarPremio } from '../api/cliente';
+import { getGanadoresPendientes, getTicket, pagarPremio, getConfiguracion } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
-import { hora12, fmt, horaVenezuela, fechaHoyVenezuela } from '../utils/formato';
+import ModalPagoDigital from '../components/ModalPagoDigital';
+import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
 
 const TODAY = fechaHoyVenezuela();
+const METODOS_DIGITALES = ['pago_movil', 'biopago'];
 
 export default function Pagos() {
   const { caja } = useAuth();
@@ -16,12 +18,15 @@ export default function Pagos() {
   const [loadingPagar, setLoadingPagar] = useState(false);
   const [error, setError] = useState('');
   const [exito, setExito] = useState('');
+  const [config, setConfig] = useState({});
+  const [showModalDigital, setShowModalDigital] = useState(false);
 
   useEffect(() => {
     getGanadoresPendientes(TODAY)
       .then(setGanadores)
       .catch(() => {})
       .finally(() => setLoading(false));
+    getConfiguracion().then(setConfig).catch(() => {});
   }, []);
 
   async function buscarTicket(cod) {
@@ -43,6 +48,12 @@ export default function Pagos() {
 
   async function handlePagar() {
     if (!ticketDetalle || !caja?.id) return;
+    // Pago móvil/biopago pasan primero por el modal que pide los datos
+    // bancarios del ganador, para poder notificar por WhatsApp.
+    if (METODOS_DIGITALES.includes(ticketDetalle.jugada.metodo_pago)) {
+      setShowModalDigital(true);
+      return;
+    }
     setError('');
     setLoadingPagar(true);
     try {
@@ -64,11 +75,47 @@ export default function Pagos() {
     }
   }
 
+  async function handleConfirmarPagoDigital(beneficiario) {
+    if (!ticketDetalle || !caja?.id) return;
+    setError('');
+    setLoadingPagar(true);
+    try {
+      const res = await pagarPremio(ticketDetalle.ticket.codigo, caja.id, {
+        banco_beneficiario: beneficiario.banco,
+        cedula_beneficiario: beneficiario.cedula,
+        telefono_beneficiario: beneficiario.telefono,
+        nombre_beneficiario: beneficiario.nombre,
+      });
+      abrirWhatsAppPagoDigital({
+        ticket: ticketDetalle.ticket,
+        jugada: ticketDetalle.jugada,
+        montoPremio: res.monto_pagado,
+        beneficiario,
+        whatsappDestino: config.whatsapp_pagos_digitales,
+      });
+      setExito(`✅ Premio pagado: ${fmt(res.monto_pagado)}`);
+      setShowModalDigital(false);
+      setTicketDetalle(null);
+      setCodigo('');
+      const g = await getGanadoresPendientes(TODAY);
+      setGanadores(g);
+    } catch (err) {
+      if (err.status === 409) {
+        setError('⚠️ Este ticket ya fue pagado anteriormente');
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setLoadingPagar(false);
+    }
+  }
+
   function cerrarDetalle() {
     setTicketDetalle(null);
     setError('');
     setExito('');
     setCodigo('');
+    setShowModalDigital(false);
   }
 
   const montoPremio = ticketDetalle
@@ -228,6 +275,16 @@ export default function Pagos() {
           </div>
         )}
       </div>
+
+      {showModalDigital && ticketDetalle && (
+        <ModalPagoDigital
+          montoPremio={montoPremio}
+          metodoPago={ticketDetalle.jugada.metodo_pago}
+          loading={loadingPagar}
+          onConfirmar={handleConfirmarPagoDigital}
+          onCancelar={() => setShowModalDigital(false)}
+        />
+      )}
     </div>
   );
 }

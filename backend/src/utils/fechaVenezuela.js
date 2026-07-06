@@ -30,10 +30,22 @@ function partesVenezuela(fecha = new Date()) {
   };
 }
 
+// 'YYYY-MM-DD' en Venezuela de una fecha dada (por defecto, ahora mismo).
+function fechaVenezuelaDe(fecha = new Date()) {
+  const { year, month, day } = partesVenezuela(fecha);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 // 'YYYY-MM-DD' de hoy en Venezuela, sin importar el timezone del proceso.
 function fechaVenezuelaHoy() {
-  const { year, month, day } = partesVenezuela();
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return fechaVenezuelaDe(new Date());
+}
+
+// Convierte un timestamp de sqlite ('YYYY-MM-DD HH:MM:SS', siempre UTC y
+// sin sufijo de zona) a su fecha calendario en Venezuela. Util para saber
+// de que dia (VE) es una caja/venta/etc a partir de su columna *_en.
+function fechaVenezuelaDeTimestampSqlite(timestampUTC) {
+  return fechaVenezuelaDe(new Date(timestampUTC.replace(' ', 'T') + 'Z'));
 }
 
 // Date cuyos campos UTC (getUTCHours, getUTCDate, etc.) representan la
@@ -50,4 +62,7 @@ function horaVenezuelaActual() {
   return { h: hour, m: minute };
 }
 
-module.exports = { fechaVenezuelaHoy, ahoraVenezuela, horaVenezuelaActual };
+module.exports = {
+  fechaVenezuelaHoy, ahoraVenezuela, horaVenezuelaActual,
+  fechaVenezuelaDe, fechaVenezuelaDeTimestampSqlite,
+};

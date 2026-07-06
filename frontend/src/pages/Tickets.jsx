@@ -1,12 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado, pagarPremio } from '../api/cliente';
+import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado, pagarPremio, getConfiguracion } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
-import { hora12, fmt, horaVenezuela, fechaHoyVenezuela } from '../utils/formato';
+import ModalPagoDigital from '../components/ModalPagoDigital';
+import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
 import { useAuth } from '../context/AuthContext';
 
 const TODAY = fechaHoyVenezuela();
 const MINUTOS_LIMITE_ANULACION = 20;
+const METODOS_DIGITALES = ['pago_movil', 'biopago'];
 
 // Misma regla que el backend (POST /api/jugadas/anular/:codigoVenta):
 // pendiente + menos de 20 min desde la venta + sorteo aun no empieza.
@@ -51,6 +53,7 @@ export default function Tickets() {
   const [error, setError] = useState('');
   const [estadoFiltro, setEstadoFiltro] = useState('todos');
   const [busqueda, setBusqueda] = useState('');
+  const [fechaFiltro, setFechaFiltro] = useState(TODAY);
 
   const [ticketDetalle, setTicketDetalle] = useState(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
@@ -61,14 +64,25 @@ export default function Tickets() {
 
   const [pagandoPremio, setPagandoPremio] = useState(false);
   const [errorPagar, setErrorPagar] = useState('');
+  const [config, setConfig] = useState({});
+  const [showModalDigital, setShowModalDigital] = useState(false);
 
   const [creditos, setCreditos] = useState([]);
   const [loadingCreditos, setLoadingCreditos] = useState(true);
   const [errorCreditos, setErrorCreditos] = useState('');
   const [cobrandoId, setCobrandoId] = useState(null);
 
+  // Un solo efecto debounced para fecha y busqueda: si hay busqueda, se
+  // ignora la fecha y se busca en TODOS los dias por codigo de ticket o
+  // de venta (quien tiene el codigo no suele saber ni le importa de que
+  // dia es); si no hay busqueda, se usa la fecha seleccionada.
   useEffect(() => {
-    cargarTickets();
+    const t = setTimeout(() => { cargarTickets(); }, 300);
+    return () => clearTimeout(t);
+  }, [fechaFiltro, busqueda]);
+
+  useEffect(() => {
+    getConfiguracion().then(setConfig).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -104,7 +118,8 @@ export default function Tickets() {
     setLoading(true);
     setError('');
     try {
-      setLista(await getTickets({ fecha: TODAY }));
+      const q = busqueda.trim();
+      setLista(await getTickets(q ? { q } : { fecha: fechaFiltro }));
     } catch (err) {
       setError(err.message || 'No se pudieron cargar los tickets');
     } finally {
@@ -113,14 +128,9 @@ export default function Tickets() {
   }
 
   const filtrados = useMemo(() => {
-    let r = lista;
-    if (estadoFiltro !== 'todos') r = r.filter(t => t.estado === estadoFiltro);
-    if (busqueda.trim()) {
-      const q = busqueda.trim().toUpperCase();
-      r = r.filter(t => t.ticket_codigo.toUpperCase().includes(q));
-    }
-    return r;
-  }, [lista, estadoFiltro, busqueda]);
+    if (estadoFiltro === 'todos') return lista;
+    return lista.filter(t => t.estado === estadoFiltro);
+  }, [lista, estadoFiltro]);
 
   async function handleAnular(t) {
     const relacionados = lista.filter(x => x.venta_codigo === t.venta_codigo);
@@ -157,6 +167,12 @@ export default function Tickets() {
 
   async function handlePagarPremio() {
     if (!ticketDetalle || !caja?.id) return;
+    // Pago móvil/biopago pasan primero por el modal que pide los datos
+    // bancarios del ganador, para poder notificar por WhatsApp.
+    if (METODOS_DIGITALES.includes(ticketDetalle.jugada.metodo_pago)) {
+      setShowModalDigital(true);
+      return;
+    }
     setErrorPagar('');
     setPagandoPremio(true);
     try {
@@ -166,6 +182,37 @@ export default function Tickets() {
       setLista(prev => prev.map(t =>
         t.ticket_codigo === actualizado.ticket.codigo ? { ...t, estado: actualizado.ticket.estado } : t
       ));
+    } catch (err) {
+      setErrorPagar(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : (err.message || 'No se pudo pagar el premio'));
+    } finally {
+      setPagandoPremio(false);
+    }
+  }
+
+  async function handleConfirmarPagoDigital(beneficiario) {
+    if (!ticketDetalle || !caja?.id) return;
+    setErrorPagar('');
+    setPagandoPremio(true);
+    try {
+      const res = await pagarPremio(ticketDetalle.ticket.codigo, caja.id, {
+        banco_beneficiario: beneficiario.banco,
+        cedula_beneficiario: beneficiario.cedula,
+        telefono_beneficiario: beneficiario.telefono,
+        nombre_beneficiario: beneficiario.nombre,
+      });
+      abrirWhatsAppPagoDigital({
+        ticket: ticketDetalle.ticket,
+        jugada: ticketDetalle.jugada,
+        montoPremio: res.monto_pagado,
+        beneficiario,
+        whatsappDestino: config.whatsapp_pagos_digitales,
+      });
+      const actualizado = await getTicket(ticketDetalle.ticket.codigo);
+      setTicketDetalle(actualizado);
+      setLista(prev => prev.map(t =>
+        t.ticket_codigo === actualizado.ticket.codigo ? { ...t, estado: actualizado.ticket.estado } : t
+      ));
+      setShowModalDigital(false);
     } catch (err) {
       setErrorPagar(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : (err.message || 'No se pudo pagar el premio'));
     } finally {
@@ -268,18 +315,34 @@ export default function Tickets() {
           ))}
         </div>
 
-        <div className="field" style={{ marginBottom: 12 }}>
-          <label>Buscar por código de ticket</label>
-          <input
-            type="text"
-            value={busqueda}
-            onChange={e => setBusqueda(e.target.value)}
-            placeholder="Ej: MS-ABC1XY23"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
+        <div className="flex gap-8 mb-12" style={{ flexWrap: 'wrap' }}>
+          <div className="field" style={{ flex: 2, minWidth: 220, marginBottom: 0 }}>
+            <label>Buscar por código de ticket o de venta</label>
+            <input
+              type="text"
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="Ej: MS-ABC1XY23 o V-A1B2C3D4"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>Fecha</label>
+            <input
+              type="date"
+              value={fechaFiltro}
+              onChange={e => setFechaFiltro(e.target.value)}
+              disabled={!!busqueda.trim()}
+            />
+          </div>
         </div>
+        {busqueda.trim() && (
+          <p className="text-muted text-sm" style={{ marginTop: -6, marginBottom: 12 }}>
+            Buscando "{busqueda.trim()}" en todos los días. Borra la búsqueda para volver a filtrar por fecha.
+          </p>
+        )}
 
         {error && <div className="alert alert-danger">{error}</div>}
         {errorAnular && <div className="alert alert-danger">{errorAnular}</div>}
@@ -334,11 +397,11 @@ export default function Tickets() {
       )}
 
       {(ticketDetalle || loadingDetalle || errorDetalle) && (
-        <div className="dialog-overlay" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); setErrorPagar(''); }}>
+        <div className="dialog-overlay" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); setErrorPagar(''); setShowModalDigital(false);}}>
           <div className="dialog" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between align-center mb-12">
               <h2>Detalle del Ticket</h2>
-              <button className="btn btn-sm btn-inline btn-outline" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); setErrorPagar(''); }}>✕</button>
+              <button className="btn btn-sm btn-inline btn-outline" onClick={() => { setTicketDetalle(null); setErrorDetalle(''); setErrorPagar(''); setShowModalDigital(false);}}>✕</button>
             </div>
 
             {loadingDetalle && <div className="loading"><div className="spinner"></div></div>}
@@ -366,6 +429,14 @@ export default function Tickets() {
                 <div className="flex justify-between mb-8">
                   <span className="text-muted">Sorteo</span>
                   <span>{hora12(ticketDetalle.jugada.sorteo_hora)} · {ticketDetalle.jugada.fecha_sorteo}</span>
+                </div>
+                <div className="flex justify-between mb-8">
+                  <span className="text-muted">Resultado del sorteo</span>
+                  <span>
+                    {ticketDetalle.resultado
+                      ? `${EMOJI_MAP[ticketDetalle.resultado.animalito_nombre] || '🐾'} ${ticketDetalle.resultado.animalito_nombre} (${ticketDetalle.resultado.animalito_numero})`
+                      : <span className="text-muted">Aún no cargado</span>}
+                  </span>
                 </div>
                 <div className="flex justify-between mb-8">
                   <span className="text-muted">Modo</span>
@@ -446,6 +517,16 @@ export default function Tickets() {
             )}
           </div>
         </div>
+      )}
+
+      {showModalDigital && ticketDetalle && (
+        <ModalPagoDigital
+          montoPremio={ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador}
+          metodoPago={ticketDetalle.jugada.metodo_pago}
+          loading={pagandoPremio}
+          onConfirmar={handleConfirmarPagoDigital}
+          onCancelar={() => setShowModalDigital(false)}
+        />
       )}
     </div>
   );

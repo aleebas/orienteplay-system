@@ -170,21 +170,29 @@ router.post('/:id/cobrar', (req, res) => {
   res.json({ mensaje: 'Venta marcada como cobrada' });
 });
 
-// Lista de tickets del dia con filtros (para la pantalla de Tickets)
+// Lista de tickets del dia con filtros (para la pantalla de Tickets).
+// Si viene "q" (busqueda por codigo de ticket o de venta) y no viene
+// "fecha" explicita, NO se restringe a hoy -- el codigo impreso en el
+// ticket fisico es el de venta (V-XXXXXXXX), asi que quien busca por
+// codigo normalmente no sabe (ni le importa) de que dia es.
 router.get('/', (req, res) => {
   const { fecha, estado, q } = req.query;
-  const f = fecha || fechaVenezuelaHoy();
+  const f = fecha || (q ? null : fechaVenezuelaHoy());
 
-  let where = `j.agencia_id = ? AND j.fecha_sorteo = ?`;
-  const params = [req.user.agencia_id, f];
+  let where = `j.agencia_id = ?`;
+  const params = [req.user.agencia_id];
 
+  if (f) {
+    where += ` AND j.fecha_sorteo = ?`;
+    params.push(f);
+  }
   if (estado && estado !== 'todos') {
     where += ` AND t.estado = ?`;
     params.push(estado);
   }
   if (q) {
-    where += ` AND t.codigo LIKE ?`;
-    params.push(`%${q}%`);
+    where += ` AND (t.codigo LIKE ? OR v.codigo LIKE ?)`;
+    params.push(`%${q}%`, `%${q}%`);
   }
 
   const rows = db.prepare(`
@@ -451,7 +459,7 @@ router.get('/venta/:codigo', (req, res) => {
 });
 
 router.get('/ticket/:codigo', (req, res) => {
-  const ticket = db.prepare(`SELECT * FROM tickets WHERE codigo = ?`).get(req.params.codigo);
+  let ticket = db.prepare(`SELECT * FROM tickets WHERE codigo = ?`).get(req.params.codigo);
   if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
 
   const jugada = db.prepare(
@@ -467,6 +475,28 @@ router.get('/ticket/:codigo', (req, res) => {
      WHERE j.id = ?`
   ).get(ticket.jugada_id);
 
+  // Self-heal: si el sorteo de esta jugada ya tiene resultado oficial
+  // cargado pero el ticket se quedo en 'pendiente' (ej. el resultado se
+  // cargo despues de que el ticket se consultara por ultima vez, o
+  // cualquier otro caso donde actualizarEstadoTickets no llego a correr
+  // sobre este ticket puntual), recalcular ahora mismo en vez de mostrar
+  // un estado desactualizado.
+  if (ticket.estado === 'pendiente') {
+    const animalitosJugados = db.prepare(
+      `SELECT animalito_id FROM jugada_animalitos WHERE jugada_id = ?`
+    ).all(jugada.id).map(a => a.animalito_id);
+    const resultadosAnimalitos = db.prepare(
+      `SELECT animalito_id FROM resultados WHERE sorteo_id = ? AND fecha = ?`
+    ).all(jugada.sorteo_id, jugada.fecha_sorteo).map(r => r.animalito_id);
+
+    if (resultadosAnimalitos.length > 0) {
+      const gano = animalitosJugados.every(id => resultadosAnimalitos.includes(id));
+      db.prepare(`UPDATE tickets SET estado = ? WHERE id = ? AND estado = 'pendiente'`)
+        .run(gano ? 'ganador' : 'perdedor', ticket.id);
+      ticket = db.prepare(`SELECT * FROM tickets WHERE id = ?`).get(ticket.id);
+    }
+  }
+
   const animalitos = db.prepare(
     `SELECT a.* FROM jugada_animalitos ja JOIN animalitos a ON a.id = ja.animalito_id
      WHERE ja.jugada_id = ? ORDER BY ja.posicion`
@@ -474,7 +504,13 @@ router.get('/ticket/:codigo', (req, res) => {
 
   const pago = db.prepare(`SELECT * FROM pagos_premio WHERE ticket_id = ?`).get(ticket.id);
 
-  res.json({ ticket, jugada, animalitos, pago: pago || null });
+  const resultado = db.prepare(
+    `SELECT r.*, a.numero AS animalito_numero, a.nombre AS animalito_nombre
+     FROM resultados r JOIN animalitos a ON a.id = r.animalito_id
+     WHERE r.sorteo_id = ? AND r.fecha = ?`
+  ).get(jugada.sorteo_id, jugada.fecha_sorteo);
+
+  res.json({ ticket, jugada, animalitos, pago: pago || null, resultado: resultado || null });
 });
 
 module.exports = router;

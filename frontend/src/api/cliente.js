@@ -89,8 +89,8 @@ export const confirmarCandidato = (id) =>
 export const descartarCandidato = (id) =>
   req('POST', `/resultados/candidatos/${id}/descartar`);
 
-export const pagarPremio = (codigoTicket, caja_id) =>
-  req('POST', `/pagos/${codigoTicket}`, { caja_id });
+export const pagarPremio = (codigoTicket, caja_id, datosBeneficiario) =>
+  req('POST', `/pagos/${codigoTicket}`, { caja_id, ...datosBeneficiario });
 
 export const getLimites = (agenciaId) =>
   req('GET', `/agencias/${agenciaId}/limites`);
@@ -100,6 +100,12 @@ export const guardarLimite = (agenciaId, payload) =>
 
 export const desactivarLimite = (limiteId) =>
   req('DELETE', `/agencias/limites/${limiteId}`);
+
+export const eliminarLimitesLoteria = (agenciaId, loteriaId) =>
+  req('DELETE', `/agencias/${agenciaId}/limites?loteria_id=${loteriaId}`);
+
+export const eliminarTodosLimites = (agenciaId) =>
+  req('DELETE', `/agencias/${agenciaId}/limites/todos`);
 
 export const getReporteVentasPorDia = (desde, hasta) =>
   req('GET', `/reportes/ventas-por-dia?desde=${desde}&hasta=${hasta}`);
@@ -148,5 +154,23 @@ export const getCreditosPendientes = () =>
 
 export const marcarCreditoCobrado = (jugadaId) =>
   req('POST', `/jugadas/${jugadaId}/cobrar`);
+
+export const getRendicion = (desde, hasta) =>
+  req('GET', `/reportes/rendicion?desde=${desde}&hasta=${hasta}`);
+
+export const getRendicionVendedores = (desde, hasta) =>
+  req('GET', `/reportes/rendicion-vendedores?desde=${desde}&hasta=${hasta}`);
+
+export const getConteoBorrado = (desde, hasta) =>
+  req('GET', `/reportes/admin/borrado-conteo?desde=${desde}&hasta=${hasta}`);
+
+export const ejecutarBorrado = (desde, hasta, confirmacion) =>
+  req('DELETE', '/reportes/admin/borrado', { desde, hasta, confirmacion });
+
+export const getConfiguracion = () =>
+  req('GET', '/reportes/configuracion');
+
+export const guardarConfiguracion = (payload) =>
+  req('PUT', '/reportes/configuracion', payload);
 
 export const API = { get: (path) => req('GET', path) };

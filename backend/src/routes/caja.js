@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { requireAuth } = require('../middleware/auth');
+const { fechaVenezuelaHoy, fechaVenezuelaDeTimestampSqlite } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -19,10 +20,22 @@ router.get('/actual', (req, res) => {
 router.post('/abrir', (req, res) => {
   const { monto_inicial, fondo_banco } = req.body;
   const yaAbierta = db.prepare(
-    `SELECT id FROM cajas WHERE agencia_id = ? AND estado = 'abierta'`
+    `SELECT id, abierta_en FROM cajas WHERE agencia_id = ? AND estado = 'abierta' ORDER BY id DESC LIMIT 1`
   ).get(req.user.agencia_id);
 
   if (yaAbierta) {
+    const fechaCaja = fechaVenezuelaDeTimestampSqlite(yaAbierta.abierta_en);
+    // Si la caja abierta es de un dia anterior (se quedo sin declarar),
+    // no se trata como el caso normal de "ya hay una caja abierta hoy":
+    // hay que obligar a cerrarla primero antes de poder abrir una nueva.
+    if (fechaCaja !== fechaVenezuelaHoy()) {
+      return res.status(409).json({
+        error: `Tienes una caja abierta del ${fechaCaja} sin declarar. Debes cerrarla antes de abrir una nueva.`,
+        requiere_cierre_anterior: true,
+        caja_id: yaAbierta.id,
+        fecha_caja_abierta: fechaCaja,
+      });
+    }
     return res.status(400).json({ error: 'Ya existe una caja abierta para esta agencia', caja_id: yaAbierta.id });
   }
 

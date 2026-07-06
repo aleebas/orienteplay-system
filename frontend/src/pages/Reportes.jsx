@@ -8,10 +8,16 @@ import {
   getLimites,
   guardarLimite,
   desactivarLimite,
+  eliminarLimitesLoteria,
+  eliminarTodosLimites,
   getUsuarios,
   crearUsuario,
   editarUsuario,
   eliminarUsuario,
+  getConteoBorrado,
+  ejecutarBorrado,
+  getConfiguracion,
+  guardarConfiguracion,
 } from '../api/cliente';
 import { fechaHoyVenezuela } from '../utils/formato';
 
@@ -44,6 +50,22 @@ export default function Reportes() {
   });
   const [savingLimite, setSavingLimite] = useState(false);
   const [limiteMsg, setLimiteMsg] = useState('');
+  const [borrandoLimites, setBorrandoLimites] = useState(false);
+
+  // Administración de datos (solo admin)
+  const [borradoDesde, setBorradoDesde] = useState(HACE7);
+  const [borradoHasta, setBorradoHasta] = useState(TODAY);
+  const [borradoConteo, setBorradoConteo] = useState(null);
+  const [borradoTexto, setBorradoTexto] = useState('');
+  const [borrandoDatos, setBorrandoDatos] = useState(false);
+  const [borradoMsg, setBorradoMsg] = useState('');
+  const [consultandoBorrado, setConsultandoBorrado] = useState(false);
+
+  // Configuración (solo admin)
+  const [config, setConfig] = useState({});
+  const [whatsappPagos, setWhatsappPagos] = useState('');
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configMsg, setConfigMsg] = useState('');
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
@@ -62,6 +84,8 @@ export default function Reportes() {
   useEffect(() => {
     if (tab === 'limites') cargarLimites();
     if (tab === 'usuarios') cargarUsuarios();
+    if (tab === 'config') cargarConfig();
+    if (tab === 'datos') { setBorradoConteo(null); setBorradoTexto(''); setBorradoMsg(''); }
   }, [tab]);
 
   async function cargarReportes() {
@@ -132,6 +156,87 @@ export default function Reportes() {
     } catch {}
   }
 
+  async function handleEliminarLimitesLoteria(loteriaId, loteriaNombre) {
+    if (!confirm(`¿Eliminar TODOS los límites configurados de "${loteriaNombre}"? Esta acción no se puede deshacer.`)) return;
+    setBorrandoLimites(true);
+    try {
+      const r = await eliminarLimitesLoteria(agenciaId, loteriaId);
+      setLimiteMsg(`${r.cantidad} límite(s) de ${loteriaNombre} eliminados`);
+      cargarLimites();
+    } catch (err) {
+      setLimiteMsg('Error: ' + err.message);
+    } finally {
+      setBorrandoLimites(false);
+    }
+  }
+
+  async function handleEliminarTodosLimites() {
+    if (!confirm('¿Eliminar TODOS los límites de apuesta de la agencia, de todas las loterías? Esta acción no se puede deshacer.')) return;
+    setBorrandoLimites(true);
+    try {
+      const r = await eliminarTodosLimites(agenciaId);
+      setLimiteMsg(`${r.cantidad} límite(s) eliminados en total`);
+      cargarLimites();
+    } catch (err) {
+      setLimiteMsg('Error: ' + err.message);
+    } finally {
+      setBorrandoLimites(false);
+    }
+  }
+
+  async function cargarConfig() {
+    try {
+      const c = await getConfiguracion();
+      setConfig(c);
+      setWhatsappPagos(c.whatsapp_pagos_digitales || '');
+    } catch {}
+  }
+
+  async function handleGuardarConfig(e) {
+    e.preventDefault();
+    setSavingConfig(true);
+    setConfigMsg('');
+    try {
+      await guardarConfiguracion({ whatsapp_pagos_digitales: whatsappPagos });
+      setConfigMsg('Configuración guardada');
+      cargarConfig();
+    } catch (err) {
+      setConfigMsg('Error: ' + err.message);
+    } finally {
+      setSavingConfig(false);
+    }
+  }
+
+  async function handleConsultarBorrado() {
+    setConsultandoBorrado(true);
+    setBorradoMsg('');
+    setBorradoConteo(null);
+    try {
+      setBorradoConteo(await getConteoBorrado(borradoDesde, borradoHasta));
+    } catch (err) {
+      setBorradoMsg('Error: ' + err.message);
+    } finally {
+      setConsultandoBorrado(false);
+    }
+  }
+
+  async function handleEjecutarBorrado() {
+    if (borradoTexto !== 'CONFIRMAR BORRADO') return;
+    if (!confirm('Última confirmación: esto borrará permanentemente las ventas del rango seleccionado. ¿Continuar?')) return;
+    setBorrandoDatos(true);
+    setBorradoMsg('');
+    try {
+      const r = await ejecutarBorrado(borradoDesde, borradoHasta, borradoTexto);
+      setBorradoMsg(`Eliminado: ${r.ventas} ventas, ${r.jugadas} jugadas, ${r.tickets} tickets, ${r.pagos_premio} pagos de premio`);
+      setBorradoConteo(null);
+      setBorradoTexto('');
+    } catch (err) {
+      setBorradoMsg('Error: ' + err.message);
+    } finally {
+      setBorrandoDatos(false);
+    }
+  }
+
   async function cargarUsuarios() {
     try {
       setUsuarios(await getUsuarios());
@@ -197,7 +302,11 @@ export default function Reportes() {
     { key: 'loteria', label: 'Por lotería' },
     { key: 'vendedor', label: 'Por vendedor' },
     { key: 'limites', label: 'Límites' },
-    ...(esAdmin ? [{ key: 'usuarios', label: 'Usuarios' }] : []),
+    ...(esAdmin ? [
+      { key: 'usuarios', label: 'Usuarios' },
+      { key: 'datos', label: 'Administración de datos' },
+      { key: 'config', label: 'Configuración' },
+    ] : []),
   ];
 
   return (
@@ -395,7 +504,30 @@ export default function Reportes() {
           </div>
 
           <div className="card">
-            <h2>Límites activos</h2>
+            <div className="flex justify-between align-center mb-12" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <h2 style={{ marginBottom: 0 }}>Límites activos</h2>
+              {limites.length > 0 && (
+                <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
+                  {Array.from(new Map(limites.map(l => [l.loteria_id, l.loteria_nombre])).entries()).map(([loteriaId, nombre]) => (
+                    <button
+                      key={loteriaId}
+                      className="btn btn-outline btn-sm btn-inline"
+                      disabled={borrandoLimites}
+                      onClick={() => handleEliminarLimitesLoteria(loteriaId, nombre)}
+                    >
+                      Eliminar límites de {nombre}
+                    </button>
+                  ))}
+                  <button
+                    className="btn btn-danger btn-sm btn-inline"
+                    disabled={borrandoLimites}
+                    onClick={handleEliminarTodosLimites}
+                  >
+                    Eliminar TODOS los límites
+                  </button>
+                </div>
+              )}
+            </div>
             {limites.length === 0 ? (
               <p className="text-muted text-sm">No hay límites configurados.</p>
             ) : (
@@ -629,6 +761,95 @@ export default function Reportes() {
             </div>
           )}
         </>
+      )}
+
+      {/* Administración de datos (solo admin) */}
+      {tab === 'datos' && esAdmin && (
+        <div className="card">
+          <h2>Eliminar ventas de un rango de fechas</h2>
+          <p className="text-muted text-sm mb-12">
+            Pensado para limpiar datos de prueba. Elimina en cascada ventas, jugadas, tickets y pagos de premio
+            del rango seleccionado. Una venta solo se elimina si TODAS sus jugadas caen dentro del rango.
+          </p>
+          {borradoMsg && (
+            <div className={`alert ${borradoMsg.startsWith('Error') ? 'alert-danger' : 'alert-success'}`}>
+              {borradoMsg}
+            </div>
+          )}
+          <div className="flex gap-8 mb-12" style={{ flexWrap: 'wrap' }}>
+            <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+              <label>Desde</label>
+              <input type="date" value={borradoDesde} onChange={e => { setBorradoDesde(e.target.value); setBorradoConteo(null); }} />
+            </div>
+            <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+              <label>Hasta</label>
+              <input type="date" value={borradoHasta} onChange={e => { setBorradoHasta(e.target.value); setBorradoConteo(null); }} />
+            </div>
+          </div>
+          <button className="btn btn-outline" onClick={handleConsultarBorrado} disabled={consultandoBorrado}>
+            {consultandoBorrado ? 'Consultando...' : 'Ver cuántos registros se eliminarían'}
+          </button>
+
+          {borradoConteo && (
+            <>
+              <div className="alert alert-warning" style={{ marginTop: 12 }}>
+                Se eliminarán: <strong>{borradoConteo.ventas}</strong> ventas, <strong>{borradoConteo.jugadas}</strong> jugadas,{' '}
+                <strong>{borradoConteo.tickets}</strong> tickets y <strong>{borradoConteo.pagos_premio}</strong> pagos de premio.
+              </div>
+              {borradoConteo.jugadas > 0 && (
+                <div className="field" style={{ marginTop: 12 }}>
+                  <label>Escribe "CONFIRMAR BORRADO" para habilitar el botón</label>
+                  <input
+                    type="text"
+                    value={borradoTexto}
+                    onChange={e => setBorradoTexto(e.target.value)}
+                    placeholder="CONFIRMAR BORRADO"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                </div>
+              )}
+              <button
+                className="btn btn-danger"
+                style={{ marginTop: 8 }}
+                disabled={borradoTexto !== 'CONFIRMAR BORRADO' || borrandoDatos || borradoConteo.jugadas === 0}
+                onClick={handleEjecutarBorrado}
+              >
+                {borrandoDatos ? 'Eliminando...' : '🗑️ Eliminar definitivamente'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Configuración (solo admin) */}
+      {tab === 'config' && esAdmin && (
+        <div className="card">
+          <h2>Configuración</h2>
+          {configMsg && (
+            <div className={`alert ${configMsg.startsWith('Error') ? 'alert-danger' : 'alert-success'}`}>
+              {configMsg}
+            </div>
+          )}
+          <form onSubmit={handleGuardarConfig}>
+            <div className="field">
+              <label>WhatsApp del responsable de pagos digitales</label>
+              <input
+                type="text"
+                value={whatsappPagos}
+                onChange={e => setWhatsappPagos(e.target.value)}
+                placeholder="Ej: 584121234567 (con código de país, sin + ni espacios)"
+              />
+              <div className="text-muted text-sm" style={{ marginTop: 4 }}>
+                A este número se dirigirá el mensaje de WhatsApp cuando se confirme un pago de premio por Pago Móvil o Biopago.
+              </div>
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={savingConfig}>
+              {savingConfig ? 'Guardando...' : 'Guardar configuración'}
+            </button>
+          </form>
+        </div>
       )}
     </div>
   );
