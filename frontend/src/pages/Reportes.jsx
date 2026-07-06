@@ -87,6 +87,7 @@ export default function Reportes() {
   const [textoConfirmacionCorreccion, setTextoConfirmacionCorreccion] = useState('');
   const [aplicandoCorreccion, setAplicandoCorreccion] = useState(false);
   const [resultadoCorreccion, setResultadoCorreccion] = useState('');
+  const [soloConTicketsAfectados, setSoloConTicketsAfectados] = useState(true);
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
@@ -1178,25 +1179,40 @@ export default function Reportes() {
                   : '⚠️ NO coinciden — hay una inconsistencia real en el cálculo, no apliques nada todavía.'}
               </div>
 
-              {correccionPreview.resultados.filter(r => r.requiere_correccion).length === 0 ? (
-                <p className="text-muted text-sm" style={{ marginTop: 16 }}>Ningún resultado requiere corrección.</p>
-              ) : (
-                <>
-                  <div className="tabla-wrap" style={{ marginTop: 16 }}>
-                    <table className="tabla">
-                      <thead>
-                        <tr>
-                          <th></th>
-                          <th>Fecha</th>
-                          <th>Lotería · Hora</th>
-                          <th>Actual (malo)</th>
-                          <th>Real (ElSevero)</th>
-                          <th>Tickets afectados</th>
-                          <th>Ya pagados que cambiarían</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {correccionPreview.resultados.filter(r => r.requiere_correccion).map(r => (
+              {(() => {
+                const conCorreccion = correccionPreview.resultados.filter(r => r.requiere_correccion);
+                const conTickets = conCorreccion.filter(r => (r.impacto_tickets?.total_tickets || 0) > 0);
+                const filasVisibles = soloConTicketsAfectados ? conTickets : conCorreccion;
+                return conCorreccion.length === 0 ? (
+                  <p className="text-muted text-sm" style={{ marginTop: 16 }}>Ningún resultado requiere corrección.</p>
+                ) : (
+                  <>
+                    <label className="flex align-center gap-8" style={{ cursor: 'pointer', marginTop: 16 }}>
+                      <input
+                        type="checkbox"
+                        checked={soloConTicketsAfectados}
+                        onChange={e => setSoloConTicketsAfectados(e.target.checked)}
+                      />
+                      Mostrar solo con tickets afectados ({conTickets.length} de {conCorreccion.length} —
+                      el resto son sorteos sin ventas, no afectan a ningún cliente)
+                    </label>
+                    <div className="tabla-wrap" style={{ marginTop: 8 }}>
+                      <table className="tabla">
+                        <thead>
+                          <tr>
+                            <th></th>
+                            <th>Fecha</th>
+                            <th>Lotería · Hora</th>
+                            <th>Actual (malo)</th>
+                            <th>Real (ElSevero)</th>
+                            <th>Tickets afectados</th>
+                            <th>Ya pagados que cambiarían</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filasVisibles.length === 0 ? (
+                            <tr><td colSpan={7} className="text-center text-muted">Sin filas con tickets afectados</td></tr>
+                          ) : filasVisibles.map(r => (
                           <tr
                             key={r.resultado_id}
                             style={r.impacto_tickets?.pagados_que_cambiarian > 0 ? { background: 'var(--danger-light)' } : undefined}
@@ -1261,7 +1277,8 @@ export default function Reportes() {
                     {aplicandoCorreccion ? 'Aplicando...' : `✓ Corregir ${seleccionCorreccion.size} resultado(s) seleccionado(s)`}
                   </button>
                 </>
-              )}
+                );
+              })()}
             </>
           )}
         </div>
