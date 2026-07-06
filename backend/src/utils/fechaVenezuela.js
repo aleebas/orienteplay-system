@@ -62,7 +62,18 @@ function horaVenezuelaActual() {
   return { h: hour, m: minute };
 }
 
+// Date "desplazado" (mismo convenio que ahoraVenezuela: los campos UTC
+// representan la hora local de Venezuela) para una fecha+hora ARBITRARIA,
+// no necesariamente "hoy". Sirve para comparar directamente contra
+// ahoraVenezuela() y saber si un sorteo puntual (fecha='YYYY-MM-DD',
+// hora='HH:MM') ya deberia haber ocurrido segun el reloj real.
+function fechaHoraVenezuela(fecha, hora) {
+  const [year, month, day] = fecha.split('-').map(Number);
+  const [hour, minute] = hora.split(':').map(Number);
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+}
+
 module.exports = {
   fechaVenezuelaHoy, ahoraVenezuela, horaVenezuelaActual,
-  fechaVenezuelaDe, fechaVenezuelaDeTimestampSqlite,
+  fechaVenezuelaDe, fechaVenezuelaDeTimestampSqlite, fechaHoraVenezuela,
 };

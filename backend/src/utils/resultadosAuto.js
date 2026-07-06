@@ -26,7 +26,7 @@
 
 const https = require('https');
 const db = require('./../db/connection');
-const { fechaVenezuelaHoy, ahoraVenezuela } = require('./fechaVenezuela');
+const { fechaVenezuelaHoy, ahoraVenezuela, fechaHoraVenezuela } = require('./fechaVenezuela');
 
 const RETRASO_INICIAL_MIN = 3;
 const INTERVALO_REINTENTO_MIN = 3;
@@ -226,6 +226,23 @@ async function ejecutarChequeo(sorteo, fecha, intento) {
   if (oficial) return;
   const yaHayCandidato = db.prepare(`SELECT id FROM resultados_candidatos WHERE sorteo_id = ? AND fecha = ?`).get(sorteo.id, fecha);
   if (yaHayCandidato) return;
+
+  // GUARDIA DE TIEMPO REAL (defensa en profundidad ante el bug del
+  // 06/07/2026): sin importar que haya calculado el scheduling, antes de
+  // siquiera intentar buscar un resultado se verifica contra el reloj VE
+  // real que el sorteo ya deberia haber ocurrido. Si no, no se busca (ni
+  // mucho menos se guarda) nada -- se reprograma para mas tarde sin
+  // consumir un intento.
+  const horaSorteoReal = fechaHoraVenezuela(fecha, sorteo.hora);
+  const ahoraVE = ahoraVenezuela();
+  if (ahoraVE < horaSorteoReal) {
+    const delay = (horaSorteoReal.getTime() - ahoraVE.getTime()) + RETRASO_INICIAL_MIN * 60000;
+    const key = `${sorteo.id}|${fecha}`;
+    const t = setTimeout(() => ejecutarChequeo(sorteo, fecha, intento), delay);
+    timers.set(key, t);
+    console.warn(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora} (${fecha}): el sorteo todavia no deberia haber pasado segun el reloj de Venezuela -- reprogramando sin buscar resultado`);
+    return;
+  }
 
   let encontrado = await buscarResultadoElSevero(sorteo.loteria_slug, sorteo.hora, fecha).catch(() => null);
   let fuente = 'elsevero';

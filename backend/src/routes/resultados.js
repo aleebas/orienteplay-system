@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { requireAuth, requireAdminOrPermiso } = require('../middleware/auth');
-const { fechaVenezuelaHoy } = require('../utils/fechaVenezuela');
+const { fechaVenezuelaHoy, ahoraVenezuela, fechaHoraVenezuela } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -21,6 +21,19 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'sorteo_id y animalito_id son requeridos' });
   }
   const fechaResultado = fecha || fechaVenezuelaHoy();
+
+  const sorteo = db.prepare(`SELECT * FROM sorteos WHERE id = ?`).get(sorteo_id);
+  if (!sorteo) return res.status(404).json({ error: 'Sorteo no encontrado' });
+
+  // Guardia de tiempo real: nunca se acepta un resultado para un sorteo
+  // que, segun el reloj real en Venezuela, todavia no deberia haber
+  // ocurrido -- sin importar de donde venga la carga (scraper, admin
+  // confirmando un candidato, o carga manual como esta).
+  if (ahoraVenezuela() < fechaHoraVenezuela(fechaResultado, sorteo.hora)) {
+    return res.status(409).json({
+      error: `El sorteo de las ${sorteo.hora} (${fechaResultado}) todavia no deberia haber ocurrido segun la hora actual en Venezuela -- no se puede cargar un resultado para un sorteo futuro`,
+    });
+  }
 
   const existente = db.prepare(`SELECT id FROM resultados WHERE sorteo_id = ? AND fecha = ?`).get(sorteo_id, fechaResultado);
   if (existente) {
@@ -83,6 +96,18 @@ router.post('/candidatos/:id/confirmar', requireAdminOrPermiso('puede_confirmar_
   if (!candidato) return res.status(404).json({ error: 'Candidato no encontrado' });
   if (candidato.estado !== 'pendiente_confirmacion' || !candidato.animalito_id) {
     return res.status(409).json({ error: 'Este candidato no tiene un animalito para confirmar' });
+  }
+
+  const sorteo = db.prepare(`SELECT * FROM sorteos WHERE id = ?`).get(candidato.sorteo_id);
+  if (!sorteo) return res.status(404).json({ error: 'Sorteo no encontrado' });
+
+  // Misma guardia de tiempo real que la carga manual -- por si acaso
+  // llega a existir un candidato para un sorteo que todavia no deberia
+  // haber ocurrido, no se puede confirmar.
+  if (ahoraVenezuela() < fechaHoraVenezuela(candidato.fecha, sorteo.hora)) {
+    return res.status(409).json({
+      error: `El sorteo de las ${sorteo.hora} (${candidato.fecha}) todavia no deberia haber ocurrido segun la hora actual en Venezuela -- no se puede confirmar un resultado para un sorteo futuro`,
+    });
   }
 
   const existente = db.prepare(`SELECT id FROM resultados WHERE sorteo_id = ? AND fecha = ?`).get(candidato.sorteo_id, candidato.fecha);
