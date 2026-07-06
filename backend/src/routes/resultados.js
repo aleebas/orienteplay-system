@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { requireAuth, requireAdminOrPermiso } = require('../middleware/auth');
+const { fechaVenezuelaHoy } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -19,7 +20,7 @@ router.post('/', (req, res) => {
   if (!sorteo_id || !animalito_id) {
     return res.status(400).json({ error: 'sorteo_id y animalito_id son requeridos' });
   }
-  const fechaResultado = fecha || new Date().toISOString().slice(0, 10);
+  const fechaResultado = fecha || fechaVenezuelaHoy();
 
   const existente = db.prepare(`SELECT id FROM resultados WHERE sorteo_id = ? AND fecha = ?`).get(sorteo_id, fechaResultado);
   if (existente) {
@@ -56,7 +57,7 @@ router.post('/', (req, res) => {
 // manual). Usado para la alerta prominente en Dashboard/Resultados.
 // ------------------------------------------------------------
 router.get('/candidatos', (req, res) => {
-  const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const fecha = req.query.fecha || fechaVenezuelaHoy();
   const candidatos = db.prepare(
     `SELECT rc.*, a.nombre AS animalito_nombre, a.numero AS animalito_numero,
             s.nombre AS sorteo_nombre, s.hora AS sorteo_hora,
@@ -145,7 +146,7 @@ function actualizarEstadoTickets(sorteoId, fecha) {
 // sorteos ya tienen resultado y cuales no.
 // ------------------------------------------------------------
 router.get('/', (req, res) => {
-  const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const fecha = req.query.fecha || fechaVenezuelaHoy();
   const resultados = db.prepare(
     `SELECT r.*, a.nombre AS animalito_nombre, a.numero AS animalito_numero,
             s.nombre AS sorteo_nombre, s.hora AS sorteo_hora,
@@ -164,7 +165,7 @@ router.get('/', (req, res) => {
 // GET /resultados/sorteo/:sorteoId?fecha=YYYY-MM-DD
 // ------------------------------------------------------------
 router.get('/sorteo/:sorteoId', (req, res) => {
-  const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const fecha = req.query.fecha || fechaVenezuelaHoy();
   const resultado = db.prepare(
     `SELECT r.*, a.nombre AS animalito_nombre, a.numero AS animalito_numero
      FROM resultados r JOIN animalitos a ON a.id = r.animalito_id
@@ -179,7 +180,7 @@ router.get('/sorteo/:sorteoId', (req, res) => {
 // del flujo de "buscar ticket y confirmar pago".
 // ------------------------------------------------------------
 router.get('/ganadores-pendientes', (req, res) => {
-  const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const fecha = req.query.fecha || fechaVenezuelaHoy();
 
   const tickets = db.prepare(
     `SELECT t.id AS ticket_id, t.codigo, j.monto, j.cliente_nombre, j.cliente_telefono,

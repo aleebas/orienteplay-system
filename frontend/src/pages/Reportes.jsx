@@ -13,9 +13,13 @@ import {
   editarUsuario,
   eliminarUsuario,
 } from '../api/cliente';
+import { fechaHoyVenezuela } from '../utils/formato';
 
-const TODAY = new Date().toISOString().slice(0, 10);
-const HACE7 = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+const TODAY = fechaHoyVenezuela();
+const HACE7 = (() => {
+  const [y, m, d] = TODAY.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 6)).toISOString().slice(0, 10);
+})();
 const fmt = (n) => `Bs. ${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function Reportes() {

@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado, pagarPremio } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
-import { hora12, fmt, horaVenezuela } from '../utils/formato';
+import { hora12, fmt, horaVenezuela, fechaHoyVenezuela } from '../utils/formato';
 import { useAuth } from '../context/AuthContext';
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = fechaHoyVenezuela();
 const MINUTOS_LIMITE_ANULACION = 20;
 
 // Misma regla que el backend (POST /api/jugadas/anular/:codigoVenta):

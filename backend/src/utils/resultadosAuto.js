@@ -22,6 +22,7 @@
 
 const https = require('https');
 const db = require('./../db/connection');
+const { fechaVenezuelaHoy, ahoraVenezuela } = require('./fechaVenezuela');
 
 const RETRASO_INICIAL_MIN = 3;
 const INTERVALO_REINTENTO_MIN = 3;
@@ -38,10 +39,6 @@ const RESULTADO_REGEX =
   /<span class="info (?:rojo|negro)">\s*\d+\s+([^<]+?)\s*<\/span>\s*<span class="info2 horario"[^>]*>\s*(\d{1,2}:\d{2}\s*[AP]M)\s*<\/span>/g;
 
 const timers = new Map(); // `${sorteoId}|${fecha}` -> timeout handle
-
-function hoyStr() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function normalizarHora12(hora24) {
   const [h, m] = hora24.split(':').map(Number);
@@ -169,7 +166,7 @@ async function ejecutarChequeo(sorteo, fecha, intento) {
 }
 
 function programarSorteosDeHoy() {
-  const fecha = hoyStr();
+  const fecha = fechaVenezuelaHoy();
   const sorteos = db.prepare(`
     SELECT s.id, s.hora, l.slug AS loteria_slug, l.nombre AS loteria_nombre
     FROM sorteos s
@@ -187,12 +184,16 @@ function programarSorteosDeHoy() {
     if (yaHayCandidato) continue;
 
     const [h, m] = sorteo.hora.split(':').map(Number);
-    const horaSorteo = new Date();
-    horaSorteo.setHours(h, m, 0, 0);
+    const ahoraVE = ahoraVenezuela();
+    const horaSorteo = new Date(ahoraVE);
+    horaSorteo.setUTCHours(h, m, 0, 0);
     const horaChequeo = new Date(horaSorteo.getTime() + RETRASO_INICIAL_MIN * 60000);
     // Si el servidor arranco despues de la hora de chequeo (o el sorteo
     // ya paso hoy), delay=0 -> revisa de inmediato en vez de saltarselo.
-    const delay = Math.max(0, horaChequeo.getTime() - Date.now());
+    // Resta contra ahoraVE (no Date.now()): ahoraVenezuela() usa campos UTC
+    // desplazados para representar la hora local, así que solo es
+    // comparable/restable contra otro valor construido igual.
+    const delay = Math.max(0, horaChequeo.getTime() - ahoraVE.getTime());
 
     const t = setTimeout(() => ejecutarChequeo(sorteo, fecha, 1), delay);
     timers.set(key, t);

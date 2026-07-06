@@ -1,3 +1,16 @@
+// Fecha de "hoy" en Venezuela ('YYYY-MM-DD'), sin importar el timezone
+// del dispositivo/navegador. new Date().toISOString().slice(0,10) da la
+// fecha en UTC, no en Venezuela -- entre las 8PM y medianoche hora
+// Venezuela ya es "manana" en UTC, y eso rompia filtros/fecha_sorteo.
+export function fechaHoyVenezuela() {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Caracas',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const g = (t) => p.find(x => x.type === t)?.value ?? '';
+  return `${g('year')}-${g('month')}-${g('day')}`;
+}
+
 export function hora12(horaStr) {
   if (!horaStr) return '';
   const [hh, mm] = horaStr.split(':').map(Number);

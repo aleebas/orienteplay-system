@@ -1,11 +1,13 @@
+const { fechaVenezuelaHoy, ahoraVenezuela } = require('./fechaVenezuela');
+
 function sorteoEstaAbierto(sorteo, fechaSorteo) {
   // Modo desarrollo: ignorar bloqueo por horario
   if (process.env.SKIP_HORARIO_CHECK === 'true') {
     return { abierto: true, motivo: null };
   }
 
-  const ahora = new Date();
-  const hoyStr = ahora.toISOString().slice(0, 10);
+  const ahora = ahoraVenezuela();
+  const hoyStr = fechaVenezuelaHoy();
 
   if (fechaSorteo !== hoyStr) {
     return { abierto: fechaSorteo > hoyStr, motivo: fechaSorteo < hoyStr ? 'La fecha del sorteo ya paso' : null };
@@ -13,7 +15,7 @@ function sorteoEstaAbierto(sorteo, fechaSorteo) {
 
   const [h, m] = sorteo.hora.split(':').map(Number);
   const horaSorteo = new Date(ahora);
-  horaSorteo.setHours(h, m, 0, 0);
+  horaSorteo.setUTCHours(h, m, 0, 0);
 
   const minutosCierre = sorteo.minutos_cierre_previo != null ? sorteo.minutos_cierre_previo : 5;
   const horaCierre = new Date(horaSorteo.getTime() - minutosCierre * 60000);

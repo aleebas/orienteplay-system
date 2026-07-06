@@ -3,6 +3,7 @@ const db = require('../db/connection');
 const { requireAuth } = require('../middleware/auth');
 const { generarCodigoTicket } = require('../utils/ticket');
 const { sorteoEstaAbierto } = require('../utils/sorteoCierre');
+const { fechaVenezuelaHoy, ahoraVenezuela } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -172,7 +173,7 @@ router.post('/:id/cobrar', (req, res) => {
 // Lista de tickets del dia con filtros (para la pantalla de Tickets)
 router.get('/', (req, res) => {
   const { fecha, estado, q } = req.query;
-  const f = fecha || new Date().toISOString().slice(0, 10);
+  const f = fecha || fechaVenezuelaHoy();
 
   let where = `j.agencia_id = ? AND j.fecha_sorteo = ?`;
   const params = [req.user.agencia_id, f];
@@ -215,7 +216,7 @@ router.get('/', (req, res) => {
 
 router.post('/validar', (req, res) => {
   const lista = req.body.jugadas || [req.body];
-  const fechaDefault = new Date().toISOString().slice(0, 10);
+  const fechaDefault = fechaVenezuelaHoy();
 
   const resultados = lista.map(j => {
     const fecha = j.fecha_sorteo || fechaDefault;
@@ -244,7 +245,7 @@ router.post('/validar', (req, res) => {
 // ------------------------------------------------------------
 router.post('/cupo-lote', (req, res) => {
   const { combos } = req.body;
-  const fecha = req.body.fecha || new Date().toISOString().slice(0, 10);
+  const fecha = req.body.fecha || fechaVenezuelaHoy();
   if (!Array.isArray(combos)) {
     return res.status(400).json({ error: 'combos debe ser un arreglo' });
   }
@@ -284,7 +285,7 @@ router.post('/', (req, res) => {
   const caja = db.prepare(`SELECT * FROM cajas WHERE id = ? AND estado = 'abierta'`).get(caja_id);
   if (!caja) return res.status(400).json({ error: 'La caja indicada no existe o no esta abierta' });
 
-  const fechaDefault = new Date().toISOString().slice(0, 10);
+  const fechaDefault = fechaVenezuelaHoy();
   const validaciones = lista.map(j => ({
     input: j,
     fecha: j.fecha_sorteo || fechaDefault,
@@ -388,7 +389,12 @@ router.post('/anular/:codigoVenta', (req, res) => {
     return res.status(404).json({ error: 'No hay jugadas asociadas a esta venta' });
   }
 
+  // ahora: instante real (epoch), para medir minutos transcurridos contra
+  // creada_en (que tambien es un instante real, UTC de sqlite) -- no debe
+  // mezclarse con ahoraVE, que usa campos UTC desplazados para representar
+  // la hora local de Venezuela y solo es comparable consigo misma.
   const ahora = new Date();
+  const ahoraVE = ahoraVenezuela();
   for (const j of jugadas) {
     if (j.ticket_estado !== 'pendiente') {
       return res.status(409).json({ error: `Esta venta tiene un ticket en estado "${j.ticket_estado}", no se puede anular` });
@@ -402,9 +408,9 @@ router.post('/anular/:codigoVenta', (req, res) => {
     }
 
     const [h, m] = j.sorteo_hora.split(':').map(Number);
-    const horaSorteo = new Date(ahora);
-    horaSorteo.setHours(h, m, 0, 0);
-    if (ahora >= horaSorteo) {
+    const horaSorteo = new Date(ahoraVE);
+    horaSorteo.setUTCHours(h, m, 0, 0);
+    if (ahoraVE >= horaSorteo) {
       return res.status(409).json({ error: `El sorteo de las ${j.sorteo_hora} ya comenzo, no se puede anular` });
     }
   }

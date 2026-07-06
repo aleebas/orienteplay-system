@@ -5,9 +5,9 @@ import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimir
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
-import { hora12, fmt, horaVenezuela } from '../utils/formato';
+import { hora12, fmt, horaVenezuela, fechaHoyVenezuela } from '../utils/formato';
 
-const TODAY = () => new Date().toISOString().slice(0, 10);
+const TODAY = () => fechaHoyVenezuela();
 
 function sorteoAbierto(sorteo) {
   const ahora = new Date();

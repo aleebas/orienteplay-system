@@ -5,9 +5,9 @@ import {
 } from '../api/cliente';
 import { useAuth } from '../context/AuthContext';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
-import { hora12 } from '../utils/formato';
+import { hora12, fechaHoyVenezuela } from '../utils/formato';
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = fechaHoyVenezuela();
 
 function sorteoYaPaso(hora) {
   const ahora = new Date();

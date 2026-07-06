@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { requireAuth } = require('../middleware/auth');
+const { fechaVenezuelaHoy } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -20,7 +21,7 @@ router.get('/ventas-por-dia', (req, res) => {
 // Ventas agrupadas por loteria
 router.get('/ventas-por-loteria', (req, res) => {
   const { fecha } = req.query;
-  const f = fecha || new Date().toISOString().slice(0, 10);
+  const f = fecha || fechaVenezuelaHoy();
   const rows = db.prepare(
     `SELECT l.nombre AS loteria, COUNT(*) AS cantidad_jugadas, SUM(j.monto) AS total_vendido
      FROM jugadas j
@@ -35,7 +36,7 @@ router.get('/ventas-por-loteria', (req, res) => {
 // Ventas agrupadas por vendedor
 router.get('/ventas-por-vendedor', (req, res) => {
   const { fecha } = req.query;
-  const f = fecha || new Date().toISOString().slice(0, 10);
+  const f = fecha || fechaVenezuelaHoy();
   const rows = db.prepare(
     `SELECT u.nombre AS vendedor, u.comision_porcentaje, COUNT(*) AS cantidad_jugadas, SUM(j.monto) AS total_vendido
      FROM jugadas j
@@ -52,7 +53,7 @@ router.get('/ventas-por-vendedor', (req, res) => {
 // Ventas recientes del día (últimas N)
 router.get('/recientes', (req, res) => {
   const limite = Math.min(parseInt(req.query.limite) || 10, 50);
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = fechaVenezuelaHoy();
 
   const rows = db.prepare(`
     SELECT
@@ -87,7 +88,7 @@ router.get('/recientes', (req, res) => {
 // Alias: Últimas ventas (mismo que recientes)
 router.get('/ultimas-ventas', (req, res) => {
   const limite = Math.min(parseInt(req.query.limite) || 10, 50);
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = fechaVenezuelaHoy();
 
   const rows = db.prepare(`
     SELECT
@@ -124,7 +125,7 @@ router.get('/ultimas-ventas', (req, res) => {
 
 // Top 5 animalitos con mas dinero apostado en el dia
 router.get('/top-animalitos', (req, res) => {
-  const f = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const f = req.query.fecha || fechaVenezuelaHoy();
   const rows = db.prepare(`
     SELECT a.numero, a.nombre, SUM(j.monto) AS total
     FROM jugada_animalitos ja
@@ -140,7 +141,7 @@ router.get('/top-animalitos', (req, res) => {
 
 // Top 3 loterias con mas ventas en el dia
 router.get('/top-loterias', (req, res) => {
-  const f = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const f = req.query.fecha || fechaVenezuelaHoy();
   const rows = db.prepare(`
     SELECT l.nombre AS loteria, SUM(j.monto) AS total
     FROM jugadas j
@@ -156,7 +157,7 @@ router.get('/top-loterias', (req, res) => {
 
 // Límites configurados con uso acumulado del día
 router.get('/limites-uso', (req, res) => {
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = fechaVenezuelaHoy();
   const agenciaId = req.user.agencia_id;
 
   const rows = db.prepare(`

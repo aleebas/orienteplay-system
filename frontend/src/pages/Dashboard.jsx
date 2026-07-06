@@ -13,9 +13,9 @@ import {
   descartarCandidato,
 } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
-import { fmt, horaVenezuela, hora12 } from '../utils/formato';
+import { fmt, horaVenezuela, hora12, fechaHoyVenezuela } from '../utils/formato';
 
-const TODAY = () => new Date().toISOString().slice(0, 10);
+const TODAY = () => fechaHoyVenezuela();
 
 function MetricCard({ icon, label, value, sub, color }) {
   return (

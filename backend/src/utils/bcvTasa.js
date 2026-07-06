@@ -7,6 +7,8 @@
 // todos los dias de lunes a viernes a las 5:30pm hora Venezuela.
 // ============================================================
 
+const { fechaVenezuelaHoy } = require('./fechaVenezuela');
+
 const CACHE = { tasa: null, fecha_actualizacion: null, obtenido_en: null };
 
 async function refrescarTasa() {
@@ -39,7 +41,7 @@ let ultimoDisparoFecha = null; // 'YYYY-MM-DD', evita disparar dos veces el mism
 function revisarHorarioProgramado() {
   const ahora = new Date(); // el proceso corre con TZ=America/Caracas (ver server.js)
   const esLaborable = ahora.getDay() >= 1 && ahora.getDay() <= 5;
-  const hoy = ahora.toISOString().slice(0, 10);
+  const hoy = fechaVenezuelaHoy();
 
   if (esLaborable && ahora.getHours() === 17 && ahora.getMinutes() === 30 && ultimoDisparoFecha !== hoy) {
     ultimoDisparoFecha = hoy;

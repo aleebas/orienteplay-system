@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getGanadoresPendientes, getTicket, pagarPremio } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
-import { hora12, fmt, horaVenezuela } from '../utils/formato';
+import { hora12, fmt, horaVenezuela, fechaHoyVenezuela } from '../utils/formato';
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = fechaHoyVenezuela();
 
 export default function Pagos() {
   const { caja } = useAuth();
