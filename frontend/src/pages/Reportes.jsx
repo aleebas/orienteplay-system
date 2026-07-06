@@ -19,8 +19,9 @@ import {
   getConfiguracion,
   guardarConfiguracion,
   getDiagnosticoFechasSospechosas,
+  getDiagnosticoPagosSospechosos,
 } from '../api/cliente';
-import { fechaHoyVenezuela } from '../utils/formato';
+import { fechaHoyVenezuela, hora12 } from '../utils/formato';
 
 const TODAY = fechaHoyVenezuela();
 const HACE7 = (() => {
@@ -72,6 +73,9 @@ export default function Reportes() {
   const [diagnostico, setDiagnostico] = useState(null);
   const [loadingDiagnostico, setLoadingDiagnostico] = useState(false);
   const [errorDiagnostico, setErrorDiagnostico] = useState('');
+  const [pagosSospechosos, setPagosSospechosos] = useState(null);
+  const [loadingPagosSospechosos, setLoadingPagosSospechosos] = useState(false);
+  const [errorPagosSospechosos, setErrorPagosSospechosos] = useState('');
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
@@ -222,6 +226,18 @@ export default function Reportes() {
       setErrorDiagnostico(err.message || 'No se pudo ejecutar el diagnóstico');
     } finally {
       setLoadingDiagnostico(false);
+    }
+  }
+
+  async function handleVerPagosSospechosos() {
+    setLoadingPagosSospechosos(true);
+    setErrorPagosSospechosos('');
+    try {
+      setPagosSospechosos(await getDiagnosticoPagosSospechosos());
+    } catch (err) {
+      setErrorPagosSospechosos(err.message || 'No se pudo cargar el detalle de pagos');
+    } finally {
+      setLoadingPagosSospechosos(false);
     }
   }
 
@@ -973,6 +989,74 @@ export default function Reportes() {
                 </table>
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {/* Detalle de pagos ya realizados sobre resultados sospechosos */}
+      {tab === 'diagnostico' && esAdmin && (
+        <div className="card">
+          <h2>Detalle de pagos ya realizados sobre resultados sospechosos</h2>
+          <p className="text-muted text-sm mb-12">
+            De los tickets que YA fueron pagados y cuyo resultado cae dentro de la firma sospechosa, compara
+            el animalito por el que apostó el cliente, el que quedó guardado como oficial (el sospechoso) y el
+            animalito real según ElSevero para esa fecha específica. Solo lectura.
+          </p>
+          {errorPagosSospechosos && <div className="alert alert-danger">{errorPagosSospechosos}</div>}
+          <button className="btn btn-primary" onClick={handleVerPagosSospechosos} disabled={loadingPagosSospechosos}>
+            {loadingPagosSospechosos ? 'Consultando ElSevero...' : '🔍 Ver detalle de pagos sobre resultados sospechosos'}
+          </button>
+
+          {pagosSospechosos && (
+            <div className="tabla-wrap" style={{ marginTop: 16 }}>
+              {pagosSospechosos.pagos_sospechosos.length === 0 ? (
+                <p className="text-muted text-sm">No hay pagos ya realizados sobre resultados sospechosos.</p>
+              ) : (
+                <table className="tabla">
+                  <thead>
+                    <tr>
+                      <th>Ticket / Venta</th>
+                      <th>Fecha</th>
+                      <th>Lotería · Hora</th>
+                      <th>Apostó</th>
+                      <th>Guardado (sospechoso)</th>
+                      <th>Real (ElSevero)</th>
+                      <th style={{ textAlign: 'right' }}>Pagado</th>
+                      <th>¿Correcto?</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagosSospechosos.pagos_sospechosos.map(p => (
+                      <tr key={p.ticket_codigo} style={p.pago_correcto === false ? { background: 'var(--danger-light)' } : undefined}>
+                        <td>
+                          <div className="bold">{p.ticket_codigo}</div>
+                          <div className="text-muted text-sm">{p.venta_codigo}</div>
+                        </td>
+                        <td>{p.fecha_sorteo}</td>
+                        <td>{p.loteria_nombre} · {hora12(p.sorteo_hora)}</td>
+                        <td>{p.animalitos_apostados.map(a => `${a.numero}-${a.nombre}`).join(', ')}</td>
+                        <td>{p.animalito_guardado_sospechoso.numero}-{p.animalito_guardado_sospechoso.nombre}</td>
+                        <td>
+                          {p.animalito_real_elsevero
+                            ? `${p.animalito_real_elsevero.numero}-${p.animalito_real_elsevero.nombre}`
+                            : <span className="text-muted">No se pudo verificar{p.error_elsevero ? ` (${p.error_elsevero})` : ''}</span>}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>{fmt(p.monto_pagado)}</td>
+                        <td>
+                          {p.pago_correcto === null ? (
+                            <span className="badge badge-warning">Sin verificar</span>
+                          ) : p.pago_correcto ? (
+                            <span className="badge badge-success">Correcto (coincidencia)</span>
+                          ) : (
+                            <span className="badge badge-danger">Pago incorrecto</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           )}
         </div>
       )}

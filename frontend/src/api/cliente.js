@@ -176,4 +176,7 @@ export const guardarConfiguracion = (payload) =>
 export const getDiagnosticoFechasSospechosas = () =>
   req('GET', '/reportes/admin/diagnostico-fechas-sospechosas');
 
+export const getDiagnosticoPagosSospechosos = () =>
+  req('GET', '/reportes/admin/diagnostico-pagos-sospechosos');
+
 export const API = { get: (path) => req('GET', path) };

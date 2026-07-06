@@ -662,4 +662,88 @@ router.get('/admin/diagnostico-fechas-sospechosas', requireAdmin, (req, res) => 
   res.json(respuesta);
 });
 
+// ------------------------------------------------------------
+// DETALLE DE PAGOS SOBRE RESULTADOS SOSPECHOSOS (solo admin, solo
+// lectura) -- de los tickets que YA fueron pagados y cuyo resultado
+// cae dentro de la firma sospechosa (ver CTE_SOSPECHOSOS arriba),
+// compara: el animalito por el que apostó el cliente, el animalito
+// que quedó guardado como oficial (el sospechoso) y el animalito REAL
+// segun ElSevero para esa fecha historica especifica (ElSevero si
+// acepta fecha como parametro, a diferencia de lotoven). No modifica
+// nada -- pensado para decidir, caso por caso, si el pago ya hecho fue
+// correcto por coincidencia o hay que reconciliarlo.
+// ------------------------------------------------------------
+router.get('/admin/diagnostico-pagos-sospechosos', requireAdmin, async (req, res) => {
+  const pagos = db.prepare(`
+    ${CTE_SOSPECHOSOS}
+    SELECT
+      t.id AS ticket_id, t.codigo AS ticket_codigo,
+      v.codigo AS venta_codigo,
+      j.id AS jugada_id, j.fecha_sorteo, j.monto AS monto_apostado,
+      s.hora AS sorteo_hora, l.nombre AS loteria_nombre, l.slug AS loteria_slug,
+      ag.numero AS animalito_guardado_numero, ag.nombre AS animalito_guardado_nombre,
+      pp.monto_pagado, pp.pagado_en
+    FROM pagos_premio pp
+    JOIN tickets t ON t.id = pp.ticket_id
+    JOIN jugadas j ON j.id = t.jugada_id
+    JOIN ventas v ON v.id = j.venta_id
+    JOIN sorteos s ON s.id = j.sorteo_id
+    JOIN loterias l ON l.id = s.loteria_id
+    JOIN resultados_malos rmal ON rmal.sorteo_id = j.sorteo_id AND rmal.fecha = j.fecha_sorteo
+    JOIN animalitos ag ON ag.id = rmal.animalito_id
+    ORDER BY pp.pagado_en DESC
+  `).all();
+
+  const getAnimalitosApostados = db.prepare(`
+    SELECT a.numero, a.nombre
+    FROM jugada_animalitos ja JOIN animalitos a ON a.id = ja.animalito_id
+    WHERE ja.jugada_id = ? ORDER BY ja.posicion
+  `);
+
+  const detalle = [];
+  for (const p of pagos) {
+    const animalitosApostados = getAnimalitosApostados.all(p.jugada_id);
+
+    let animalitoReal = null;
+    let errorElSevero = null;
+    try {
+      const todos = await descargarResultadosElSevero(p.fecha_sorteo);
+      const horaBuscada = normalizarHora12(p.sorteo_hora);
+      const match = todos.find(
+        (r) => normalizarSlug(r.loteria || '') === p.loteria_slug && r.hora === horaBuscada
+      );
+      animalitoReal = match ? { numero: String(match.numero), nombre: String(match.nombre).toUpperCase() } : null;
+    } catch (err) {
+      errorElSevero = err.message;
+    }
+
+    // Misma regla que actualizarEstadoTickets: TODOS los animalitos
+    // apostados deben coincidir con el (unico) animalito ganador real.
+    const pagoCorrecto = animalitoReal
+      ? animalitosApostados.every((a) => a.numero === animalitoReal.numero)
+      : null; // null = no se pudo verificar contra ElSevero
+
+    detalle.push({
+      ticket_codigo: p.ticket_codigo,
+      venta_codigo: p.venta_codigo,
+      fecha_sorteo: p.fecha_sorteo,
+      loteria_nombre: p.loteria_nombre,
+      sorteo_hora: p.sorteo_hora,
+      monto_apostado: p.monto_apostado,
+      monto_pagado: p.monto_pagado,
+      pagado_en: p.pagado_en,
+      animalitos_apostados: animalitosApostados,
+      animalito_guardado_sospechoso: {
+        numero: p.animalito_guardado_numero,
+        nombre: p.animalito_guardado_nombre,
+      },
+      animalito_real_elsevero: animalitoReal,
+      error_elsevero: errorElSevero,
+      pago_correcto: pagoCorrecto,
+    });
+  }
+
+  res.json({ pagos_sospechosos: detalle });
+});
+
 module.exports = router;
