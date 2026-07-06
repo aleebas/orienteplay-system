@@ -18,6 +18,7 @@ import {
   ejecutarBorrado,
   getConfiguracion,
   guardarConfiguracion,
+  getDiagnosticoFechasSospechosas,
 } from '../api/cliente';
 import { fechaHoyVenezuela } from '../utils/formato';
 
@@ -66,6 +67,11 @@ export default function Reportes() {
   const [whatsappPagos, setWhatsappPagos] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMsg, setConfigMsg] = useState('');
+
+  // Diagnóstico de resultados sospechosos (solo admin, solo lectura)
+  const [diagnostico, setDiagnostico] = useState(null);
+  const [loadingDiagnostico, setLoadingDiagnostico] = useState(false);
+  const [errorDiagnostico, setErrorDiagnostico] = useState('');
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
@@ -207,6 +213,18 @@ export default function Reportes() {
     }
   }
 
+  async function handleEjecutarDiagnostico() {
+    setLoadingDiagnostico(true);
+    setErrorDiagnostico('');
+    try {
+      setDiagnostico(await getDiagnosticoFechasSospechosas());
+    } catch (err) {
+      setErrorDiagnostico(err.message || 'No se pudo ejecutar el diagnóstico');
+    } finally {
+      setLoadingDiagnostico(false);
+    }
+  }
+
   async function handleConsultarBorrado() {
     setConsultandoBorrado(true);
     setBorradoMsg('');
@@ -306,6 +324,7 @@ export default function Reportes() {
       { key: 'usuarios', label: 'Usuarios' },
       { key: 'datos', label: 'Administración de datos' },
       { key: 'config', label: 'Configuración' },
+      { key: 'diagnostico', label: 'Diagnóstico' },
     ] : []),
   ];
 
@@ -849,6 +868,112 @@ export default function Reportes() {
               {savingConfig ? 'Guardando...' : 'Guardar configuración'}
             </button>
           </form>
+        </div>
+      )}
+
+      {/* Diagnóstico de resultados sospechosos (solo admin) */}
+      {tab === 'diagnostico' && esAdmin && (
+        <div className="card">
+          <h2>Diagnóstico de resultados sospechosos</h2>
+          <p className="text-muted text-sm mb-12">
+            Busca resultados y candidatos cuyo momento real de creación (hora Venezuela) cae en el día
+            anterior al que la fecha dice representar -- la firma del bug encontrado el 06/07/2026 en el
+            scraper automático. Es de solo lectura, no modifica ni corrige nada.
+          </p>
+          {errorDiagnostico && <div className="alert alert-danger">{errorDiagnostico}</div>}
+          <button className="btn btn-primary" onClick={handleEjecutarDiagnostico} disabled={loadingDiagnostico}>
+            {loadingDiagnostico ? 'Ejecutando...' : '🔍 Ejecutar diagnóstico de resultados sospechosos'}
+          </button>
+
+          {diagnostico && (
+            <>
+              <div className="metrics-grid" style={{ marginTop: 16 }}>
+                <div className="resumen-item">
+                  <div className="resumen-valor" style={{ color: diagnostico.resumen.total_candidatos_sospechosos > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                    {diagnostico.resumen.total_candidatos_sospechosos}
+                  </div>
+                  <div className="resumen-label">Candidatos sospechosos</div>
+                </div>
+                <div className="resumen-item">
+                  <div className="resumen-valor" style={{ color: diagnostico.resumen.total_resultados_sospechosos > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                    {diagnostico.resumen.total_resultados_sospechosos}
+                  </div>
+                  <div className="resumen-label">Resultados oficiales sospechosos</div>
+                </div>
+                <div className="resumen-item">
+                  <div className="resumen-valor" style={{ color: diagnostico.impacto_tickets.tickets_afectados > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                    {diagnostico.impacto_tickets.tickets_afectados}
+                  </div>
+                  <div className="resumen-label">Tickets afectados</div>
+                </div>
+                <div className="resumen-item">
+                  <div className="resumen-valor" style={{ color: diagnostico.impacto_tickets.pagos_ya_realizados > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                    {fmt(diagnostico.impacto_tickets.monto_ya_pagado)}
+                  </div>
+                  <div className="resumen-label">Ya pagado ({diagnostico.impacto_tickets.pagos_ya_realizados} pago(s))</div>
+                </div>
+              </div>
+
+              <h3 style={{ marginTop: 20, marginBottom: 8 }}>Impacto en tickets, por estado</h3>
+              <div className="tabla-wrap">
+                <table className="tabla">
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'right' }}>Ganador</th>
+                      <th style={{ textAlign: 'right' }}>Perdedor</th>
+                      <th style={{ textAlign: 'right' }}>Pagado</th>
+                      <th style={{ textAlign: 'right' }}>Pendiente</th>
+                      <th style={{ textAlign: 'right' }}>Anulado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td style={{ textAlign: 'right' }}>{diagnostico.impacto_tickets.tickets_ganador}</td>
+                      <td style={{ textAlign: 'right' }}>{diagnostico.impacto_tickets.tickets_perdedor}</td>
+                      <td style={{ textAlign: 'right' }}>{diagnostico.impacto_tickets.tickets_pagado}</td>
+                      <td style={{ textAlign: 'right' }}>{diagnostico.impacto_tickets.tickets_pendiente}</td>
+                      <td style={{ textAlign: 'right' }}>{diagnostico.impacto_tickets.tickets_anulado}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 style={{ marginTop: 20, marginBottom: 8 }}>Desglose por fecha</h3>
+              <div className="tabla-wrap">
+                <table className="tabla">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th style={{ textAlign: 'right' }}>Resultados totales</th>
+                      <th style={{ textAlign: 'right' }}>Resultados sospechosos</th>
+                      <th style={{ textAlign: 'right' }}>Candidatos totales</th>
+                      <th style={{ textAlign: 'right' }}>Candidatos sospechosos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diagnostico.resumen.por_fecha.length === 0 ? (
+                      <tr><td colSpan={5} className="text-center text-muted">Sin datos</td></tr>
+                    ) : diagnostico.resumen.por_fecha.map(f => {
+                      const haySospecha = f.resultados_sospechosos > 0 || f.candidatos_sospechosos > 0;
+                      return (
+                        <tr key={f.fecha} style={haySospecha ? { background: 'var(--danger-light)' } : undefined}>
+                          <td className="bold">{f.fecha}</td>
+                          <td style={{ textAlign: 'right' }}>{f.resultados_totales}</td>
+                          <td style={{ textAlign: 'right', fontWeight: f.resultados_sospechosos > 0 ? 700 : 400, color: f.resultados_sospechosos > 0 ? 'var(--danger)' : undefined }}>
+                            {f.resultados_sospechosos}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>{f.candidatos_totales}</td>
+                          <td style={{ textAlign: 'right', fontWeight: f.candidatos_sospechosos > 0 ? 700 : 400, color: f.candidatos_sospechosos > 0 ? 'var(--danger)' : undefined }}>
+                            {f.candidatos_sospechosos}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
