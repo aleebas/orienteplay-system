@@ -1169,10 +1169,12 @@ export default function Reportes() {
               >
                 <strong>Verificación cruzada de tickets:</strong> la suma de "tickets afectados" fila por
                 fila da <strong>{correccionPreview.verificacion_impacto.suma_total_tickets_por_fila}</strong>,
-                y la misma query agregada sobre todos los sospechosos a la vez da{' '}
-                <strong>{correccionPreview.verificacion_impacto.tickets_afectados_agregado_real}</strong>.{' '}
+                y la misma query agregada pero restringida a los resultados que sí requieren corrección da{' '}
+                <strong>{correccionPreview.verificacion_impacto.tickets_afectados_agregado_real}</strong>{' '}
+                (este número puede ser menor que el total del diagnóstico general, que incluye además los
+                resultados sospechosos por horario que resultaron estar bien por coincidencia).{' '}
                 {correccionPreview.verificacion_impacto.coincide
-                  ? 'Coinciden — las filas en "0 de 0" son sorteos que genuinamente no tuvieron jugadas, no un error de cálculo.'
+                  ? 'Coinciden — el cálculo por fila es correcto.'
                   : '⚠️ NO coinciden — hay una inconsistencia real en el cálculo, no apliques nada todavía.'}
               </div>
 

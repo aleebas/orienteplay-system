@@ -852,20 +852,30 @@ router.get('/admin/correccion-resultados-preview', requireAdmin, async (req, res
   const requierenCorreccion = preview.filter((p) => p.requiere_correccion).length;
   const sinCambios = preview.filter((p) => !p.requiere_correccion && p.animalito_real && !p.error_elsevero).length;
 
-  // Verificacion cruzada del impacto en tickets: mismo calculo agregado
-  // (una sola query sobre TODOS los resultados_malos a la vez) que ya usa
-  // /diagnostico-fechas-sospechosas y que dio 299/252 correctamente. Si
-  // esto no coincide con la suma de impacto_tickets.total_tickets fila por
-  // fila de arriba, hay un bug real en el calculo por-fila; si coincide,
-  // los "0 de 0" que se vean en la tabla son sorteos que genuinamente no
-  // tuvieron jugadas ese dia, no un bug.
-  const impactoAgregadoReal = db.prepare(`
-    ${CTE_SOSPECHOSOS}
-    SELECT COUNT(DISTINCT t.id) AS tickets_afectados
-    FROM resultados_malos rmal
-    JOIN jugadas j ON j.sorteo_id = rmal.sorteo_id AND j.fecha_sorteo = rmal.fecha
-    JOIN tickets t ON t.jugada_id = j.id
-  `).get();
+  // Verificacion cruzada del impacto en tickets. OJO: la primera version de
+  // esto comparaba contra el agregado de /diagnostico-fechas-sospechosas
+  // (299), que cuenta tickets de TODOS los resultados con firma de timing
+  // sospechosa, sin filtrar por si el animalito guardado realmente esta mal
+  // -- incluye resultados que resultaron ser correctos por coincidencia
+  // (sin_cambios), cuyos tickets mi calculo por-fila NO debe sumar (no hay
+  // nada que corregir ahi). Comparar 299 (universo completo) contra mi suma
+  // (solo los que SI requieren correccion) daba un falso rojo -- no es que
+  // el join estuviera mal, es que eran dos preguntas distintas. Ahora se
+  // recalcula el agregado filtrado a los MISMOS resultado_id que arriba se
+  // marcaron requiere_correccion=true, para comparar manzanas con manzanas.
+  const idsRequierenCorreccion = preview.filter((p) => p.requiere_correccion).map((p) => p.resultado_id);
+  let impactoAgregadoReal = { tickets_afectados: 0 };
+  if (idsRequierenCorreccion.length > 0) {
+    const placeholders = idsRequierenCorreccion.map(() => '?').join(',');
+    impactoAgregadoReal = db.prepare(`
+      ${CTE_SOSPECHOSOS}
+      SELECT COUNT(DISTINCT t.id) AS tickets_afectados
+      FROM resultados_malos rmal
+      JOIN jugadas j ON j.sorteo_id = rmal.sorteo_id AND j.fecha_sorteo = rmal.fecha
+      JOIN tickets t ON t.jugada_id = j.id
+      WHERE rmal.id IN (${placeholders})
+    `).get(...idsRequierenCorreccion);
+  }
   const sumaImpactoPorFila = preview.reduce((s, p) => s + (p.impacto_tickets?.total_tickets || 0), 0);
 
   res.json({
