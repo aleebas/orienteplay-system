@@ -76,7 +76,7 @@ router.get('/recientes', (req, res) => {
     JOIN sorteos s  ON s.id  = j.sorteo_id
     JOIN loterias l ON l.id  = s.loteria_id
     LEFT JOIN tickets t ON t.jugada_id = j.id
-    WHERE v.agencia_id = ? AND DATE(v.creada_en) = ?
+    WHERE v.agencia_id = ? AND j.fecha_sorteo = ?
     GROUP BY v.id
     ORDER BY v.creada_en DESC
     LIMIT ?
@@ -114,7 +114,7 @@ router.get('/ultimas-ventas', (req, res) => {
     JOIN jugada_animalitos ja ON ja.jugada_id = j.id
     JOIN animalitos a ON a.id = ja.animalito_id
     LEFT JOIN tickets t ON t.jugada_id = j.id
-    WHERE v.agencia_id = ? AND DATE(v.creada_en) = ?
+    WHERE v.agencia_id = ? AND j.fecha_sorteo = ?
     GROUP BY v.id
     ORDER BY v.creada_en DESC
     LIMIT ?
