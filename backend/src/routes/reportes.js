@@ -550,46 +550,116 @@ router.get('/admin/diagnostico-resultado', requireAdmin, async (req, res) => {
 //     mano un resultado para una fecha que en ese momento todavia no
 //     habia empezado.
 // ------------------------------------------------------------
-router.get('/admin/diagnostico-fechas-sospechosas', requireAdmin, (req, res) => {
-  const candidatosSospechosos = db.prepare(`
-    SELECT rc.id, l.nombre AS loteria_nombre, s.hora AS sorteo_hora, rc.fecha,
-           rc.estado, rc.intentos,
-           rc.creado_en AS timestamp_utc,
-           datetime(rc.creado_en, '-4 hours') AS timestamp_ve,
-           date(datetime(rc.creado_en, '-4 hours')) AS dia_real_creacion,
-           a.numero AS animalito_numero, a.nombre AS animalito_nombre
+// La condicion "creado antes del dia que fecha dice representar" se repite
+// para candidatos y resultados -- queda en CTEs para no duplicarla y
+// arriesgar que las dos copias diverjan.
+const CTE_SOSPECHOSOS = `
+  WITH candidatos_malos AS (
+    SELECT rc.*
     FROM resultados_candidatos rc
-    JOIN sorteos s ON s.id = rc.sorteo_id
-    JOIN loterias l ON l.id = s.loteria_id
-    LEFT JOIN animalitos a ON a.id = rc.animalito_id
     WHERE date(datetime(rc.creado_en, '-4 hours')) < rc.fecha
-    ORDER BY rc.fecha DESC
-  `).all();
-
-  const resultadosSospechosos = db.prepare(`
-    SELECT r.id, l.nombre AS loteria_nombre, s.hora AS sorteo_hora, r.fecha, r.fuente,
-           COALESCE(rc.creado_en, r.confirmado_en) AS timestamp_utc,
-           datetime(COALESCE(rc.creado_en, r.confirmado_en), '-4 hours') AS timestamp_ve,
-           date(datetime(COALESCE(rc.creado_en, r.confirmado_en), '-4 hours')) AS dia_real_creacion,
-           r.confirmado_en,
-           a.numero AS animalito_numero, a.nombre AS animalito_nombre
+  ),
+  resultados_malos AS (
+    SELECT r.*, COALESCE(rc.creado_en, r.confirmado_en) AS ts_deteccion_utc
     FROM resultados r
-    JOIN sorteos s ON s.id = r.sorteo_id
-    JOIN loterias l ON l.id = s.loteria_id
-    JOIN animalitos a ON a.id = r.animalito_id
     LEFT JOIN resultados_candidatos rc ON rc.sorteo_id = r.sorteo_id AND rc.fecha = r.fecha
     WHERE date(datetime(COALESCE(rc.creado_en, r.confirmado_en), '-4 hours')) < r.fecha
-    ORDER BY r.fecha DESC
+  )
+`;
+
+// Por defecto SOLO devuelve numeros (resumen + impacto en tickets) -- el
+// detalle completo fila por fila se trunca facil si el problema es masivo.
+// Pasar ?detalle=true para incluir los arrays completos.
+router.get('/admin/diagnostico-fechas-sospechosas', requireAdmin, (req, res) => {
+  const totalCandidatosSospechosos = db.prepare(`${CTE_SOSPECHOSOS} SELECT COUNT(*) AS n FROM candidatos_malos`).get().n;
+  const totalResultadosSospechosos = db.prepare(`${CTE_SOSPECHOSOS} SELECT COUNT(*) AS n FROM resultados_malos`).get().n;
+
+  // Desglose por fecha: cuantos resultados/candidatos hay en total ese dia
+  // vs. cuantos de esos son sospechosos -- para saber si es TODO el dia o
+  // una porcion.
+  const porFecha = db.prepare(`
+    ${CTE_SOSPECHOSOS}
+    SELECT
+      todos.fecha,
+      COALESCE(rt.total, 0) AS resultados_totales,
+      COALESCE(rm.total, 0) AS resultados_sospechosos,
+      COALESCE(ct.total, 0) AS candidatos_totales,
+      COALESCE(cm.total, 0) AS candidatos_sospechosos
+    FROM (
+      SELECT fecha FROM resultados
+      UNION
+      SELECT fecha FROM resultados_candidatos
+    ) todos
+    LEFT JOIN (SELECT fecha, COUNT(*) AS total FROM resultados GROUP BY fecha) rt ON rt.fecha = todos.fecha
+    LEFT JOIN (SELECT fecha, COUNT(*) AS total FROM resultados_malos GROUP BY fecha) rm ON rm.fecha = todos.fecha
+    LEFT JOIN (SELECT fecha, COUNT(*) AS total FROM resultados_candidatos GROUP BY fecha) ct ON ct.fecha = todos.fecha
+    LEFT JOIN (SELECT fecha, COUNT(*) AS total FROM candidatos_malos GROUP BY fecha) cm ON cm.fecha = todos.fecha
+    ORDER BY todos.fecha DESC
+    LIMIT 14
   `).all();
 
-  res.json({
+  // Impacto real en tickets: todas las jugadas/tickets del mismo
+  // sorteo_id+fecha_sorteo que un resultado sospechoso, y cuantos de esos
+  // tickets ya tienen un pago registrado (el numero mas urgente).
+  const impactoTickets = db.prepare(`
+    ${CTE_SOSPECHOSOS}
+    SELECT
+      COUNT(DISTINCT t.id) AS tickets_afectados,
+      SUM(CASE WHEN t.estado = 'ganador'   THEN 1 ELSE 0 END) AS tickets_ganador,
+      SUM(CASE WHEN t.estado = 'perdedor'  THEN 1 ELSE 0 END) AS tickets_perdedor,
+      SUM(CASE WHEN t.estado = 'pagado'    THEN 1 ELSE 0 END) AS tickets_pagado,
+      SUM(CASE WHEN t.estado = 'pendiente' THEN 1 ELSE 0 END) AS tickets_pendiente,
+      SUM(CASE WHEN t.estado = 'anulado'   THEN 1 ELSE 0 END) AS tickets_anulado,
+      COUNT(DISTINCT pp.id) AS pagos_ya_realizados,
+      COALESCE(SUM(pp.monto_pagado), 0) AS monto_ya_pagado
+    FROM resultados_malos rmal
+    JOIN jugadas j ON j.sorteo_id = rmal.sorteo_id AND j.fecha_sorteo = rmal.fecha
+    JOIN tickets t ON t.jugada_id = j.id
+    LEFT JOIN pagos_premio pp ON pp.ticket_id = t.id
+  `).get();
+
+  const respuesta = {
     resumen: {
-      total_candidatos_sospechosos: candidatosSospechosos.length,
-      total_resultados_sospechosos: resultadosSospechosos.length,
+      total_candidatos_sospechosos: totalCandidatosSospechosos,
+      total_resultados_sospechosos: totalResultadosSospechosos,
+      por_fecha: porFecha,
     },
-    candidatos_sospechosos: candidatosSospechosos,
-    resultados_sospechosos: resultadosSospechosos,
-  });
+    impacto_tickets: impactoTickets,
+  };
+
+  if (req.query.detalle === 'true') {
+    respuesta.candidatos_sospechosos = db.prepare(`
+      ${CTE_SOSPECHOSOS}
+      SELECT cm.id, l.nombre AS loteria_nombre, s.hora AS sorteo_hora, cm.fecha,
+             cm.estado, cm.intentos,
+             cm.creado_en AS timestamp_utc,
+             datetime(cm.creado_en, '-4 hours') AS timestamp_ve,
+             date(datetime(cm.creado_en, '-4 hours')) AS dia_real_creacion,
+             a.numero AS animalito_numero, a.nombre AS animalito_nombre
+      FROM candidatos_malos cm
+      JOIN sorteos s ON s.id = cm.sorteo_id
+      JOIN loterias l ON l.id = s.loteria_id
+      LEFT JOIN animalitos a ON a.id = cm.animalito_id
+      ORDER BY cm.fecha DESC
+    `).all();
+
+    respuesta.resultados_sospechosos = db.prepare(`
+      ${CTE_SOSPECHOSOS}
+      SELECT rmal.id, l.nombre AS loteria_nombre, s.hora AS sorteo_hora, rmal.fecha, rmal.fuente,
+             rmal.ts_deteccion_utc AS timestamp_utc,
+             datetime(rmal.ts_deteccion_utc, '-4 hours') AS timestamp_ve,
+             date(datetime(rmal.ts_deteccion_utc, '-4 hours')) AS dia_real_creacion,
+             rmal.confirmado_en,
+             a.numero AS animalito_numero, a.nombre AS animalito_nombre
+      FROM resultados_malos rmal
+      JOIN sorteos s ON s.id = rmal.sorteo_id
+      JOIN loterias l ON l.id = s.loteria_id
+      JOIN animalitos a ON a.id = rmal.animalito_id
+      ORDER BY rmal.fecha DESC
+    `).all();
+  }
+
+  res.json(respuesta);
 });
 
 module.exports = router;
