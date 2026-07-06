@@ -1,13 +1,17 @@
 // ============================================================
 // RESULTADOS AUTOMATICOS
 // ------------------------------------------------------------
-// 3 minutos despues de cada sorteo, intenta obtener el resultado
-// desde lotoven.com. Si lo encuentra, lo deja en
-// resultados_candidatos con estado 'pendiente_confirmacion' --
-// NUNCA marca tickets como ganadores/perdedores por si solo, eso
-// solo pasa cuando un admin confirma (ver POST /api/resultados
-// que ya exige una accion explicita para eso). Si tras 4 intentos
-// (12 minutos) no encuentra nada, marca 'agotado' para que quede
+// 3 minutos despues de cada sorteo, intenta obtener el resultado.
+// Fuente primaria: elsevero.com/api/resultados-publicos (JSON
+// publico, mismo endpoint que consume su propia pagina de
+// resultados). Si no responde o no trae el sorteo buscado, cae a
+// lotoven.com (scraping de HTML) como respaldo. Si lo encuentra,
+// lo deja en resultados_candidatos con estado
+// 'pendiente_confirmacion' -- NUNCA marca tickets como
+// ganadores/perdedores por si solo, eso solo pasa cuando un admin
+// confirma (ver POST /api/resultados que ya exige una accion
+// explicita para eso). Si tras 4 intentos (12 minutos) no
+// encuentra nada en ninguna fuente, marca 'agotado' para que quede
 // claro que hace falta cargar el resultado a mano.
 //
 // lotoven.com/animalitos/ renderiza TODAS las loterias del dia en
@@ -29,6 +33,7 @@ const INTERVALO_REINTENTO_MIN = 3;
 const MAX_INTENTOS = 4;
 const REVISAR_SORTEOS_NUEVOS_MS = 60 * 60 * 1000; // cada hora
 
+const ELSEVERO_URL = 'https://www.elsevero.com/api/resultados-publicos';
 const RESULTADOS_URL = 'https://lotoven.com/animalitos/';
 const CHROME_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -45,6 +50,85 @@ function normalizarHora12(hora24) {
   const period = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 || 12;
   return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+// "Guácharo Activo" -> "guacharoactivo" -- minuscula, sin tildes, sin
+// espacios. Coincide exactamente con los slugs de la tabla loterias
+// (lottoactivo, lagranjita, ruletaactiva, selvaplus, guacharoactivo).
+function normalizarSlug(texto) {
+  return texto
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Cache en memoria por fecha (TTL corto) para no golpear el endpoint una
+// vez por cada sorteo que se revisa casi al mismo tiempo (varias loterias
+// comparten horario, ej. 08:00 AM).
+const CACHE_ELSEVERO_TTL_MS = 30 * 1000;
+let cacheElSevero = { fecha: null, obtenidoEn: 0, promesa: null };
+
+// https://www.elsevero.com/api/resultados-publicos?fecha=YYYY-MM-DD
+// Endpoint JSON publico (el mismo que consume su propia pagina de
+// resultados via fetch/XHR): { fecha, resultados: [{ id, fecha, hora,
+// loteria, numero, nombre, emoji, imagenUrl }], stats: {...} }.
+function descargarResultadosElSevero(fecha) {
+  const ahora = Date.now();
+  if (cacheElSevero.fecha === fecha && ahora - cacheElSevero.obtenidoEn < CACHE_ELSEVERO_TTL_MS) {
+    return cacheElSevero.promesa;
+  }
+
+  const promesa = new Promise((resolve, reject) => {
+    const req = https.get(
+      `${ELSEVERO_URL}?fecha=${fecha}`,
+      {
+        headers: {
+          'User-Agent': CHROME_USER_AGENT,
+          Accept: 'application/json',
+        },
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            resolve(Array.isArray(json.resultados) ? json.resultados : []);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+    );
+    req.setTimeout(10000, () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+
+  cacheElSevero = { fecha, obtenidoEn: ahora, promesa };
+  return promesa;
+}
+
+async function buscarResultadoElSevero(loteriaSlug, hora, fecha) {
+  let resultados;
+  try {
+    resultados = await descargarResultadosElSevero(fecha);
+  } catch {
+    return null;
+  }
+
+  const horaBuscada = normalizarHora12(hora);
+  const encontrado = resultados.find(
+    (r) => normalizarSlug(r.loteria || '') === loteriaSlug && r.hora === horaBuscada
+  );
+  if (!encontrado) return null;
+
+  return { nombre: String(encontrado.nombre).toUpperCase(), numero: String(encontrado.numero) };
 }
 
 function descargarPaginaAnimalitos() {
@@ -100,6 +184,8 @@ function parsearResultados(seccionHtml) {
   return resultados;
 }
 
+// Respaldo: solo se consulta si elsevero.com no responde o no trae
+// todavia el resultado buscado.
 async function buscarResultadoLotoven(loteriaSlug, hora) {
   let html;
   try {
@@ -141,15 +227,27 @@ async function ejecutarChequeo(sorteo, fecha, intento) {
   const yaHayCandidato = db.prepare(`SELECT id FROM resultados_candidatos WHERE sorteo_id = ? AND fecha = ?`).get(sorteo.id, fecha);
   if (yaHayCandidato) return;
 
-  const encontrado = await buscarResultadoLotoven(sorteo.loteria_slug, sorteo.hora).catch(() => null);
+  let encontrado = await buscarResultadoElSevero(sorteo.loteria_slug, sorteo.hora, fecha).catch(() => null);
+  let fuente = 'elsevero';
+  if (!encontrado) {
+    encontrado = await buscarResultadoLotoven(sorteo.loteria_slug, sorteo.hora).catch(() => null);
+    fuente = 'lotoven';
+  }
 
   if (encontrado) {
-    const animalito = db.prepare(
-      `SELECT id FROM animalitos WHERE loteria_id = (SELECT loteria_id FROM sorteos WHERE id = ?) AND nombre = ?`
-    ).get(sorteo.id, encontrado.nombre);
+    // ElSevero trae el numero del animalito -- buscar por numero es mas
+    // confiable que por nombre (evita mismatches de tildes/mayusculas).
+    // Lotoven (respaldo) solo trae el nombre.
+    const animalito = encontrado.numero
+      ? db.prepare(
+          `SELECT id FROM animalitos WHERE loteria_id = (SELECT loteria_id FROM sorteos WHERE id = ?) AND numero = ?`
+        ).get(sorteo.id, encontrado.numero)
+      : db.prepare(
+          `SELECT id FROM animalitos WHERE loteria_id = (SELECT loteria_id FROM sorteos WHERE id = ?) AND nombre = ?`
+        ).get(sorteo.id, encontrado.nombre);
     if (animalito) {
       guardarCandidato(sorteo.id, fecha, animalito.id, 'pendiente_confirmacion', intento);
-      console.log(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora}: candidato encontrado (${encontrado.nombre}), esperando confirmacion`);
+      console.log(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora}: candidato encontrado via ${fuente} (${encontrado.nombre}), esperando confirmacion`);
       return;
     }
   }
