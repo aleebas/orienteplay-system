@@ -1163,6 +1163,19 @@ export default function Reportes() {
                 </div>
               </div>
 
+              <div
+                className={`alert ${correccionPreview.verificacion_impacto.coincide ? 'alert-success' : 'alert-danger'}`}
+                style={{ marginTop: 12 }}
+              >
+                <strong>Verificación cruzada de tickets:</strong> la suma de "tickets afectados" fila por
+                fila da <strong>{correccionPreview.verificacion_impacto.suma_total_tickets_por_fila}</strong>,
+                y la misma query agregada sobre todos los sospechosos a la vez da{' '}
+                <strong>{correccionPreview.verificacion_impacto.tickets_afectados_agregado_real}</strong>.{' '}
+                {correccionPreview.verificacion_impacto.coincide
+                  ? 'Coinciden — las filas en "0 de 0" son sorteos que genuinamente no tuvieron jugadas, no un error de cálculo.'
+                  : '⚠️ NO coinciden — hay una inconsistencia real en el cálculo, no apliques nada todavía.'}
+              </div>
+
               {correccionPreview.resultados.filter(r => r.requiere_correccion).length === 0 ? (
                 <p className="text-muted text-sm" style={{ marginTop: 16 }}>Ningún resultado requiere corrección.</p>
               ) : (

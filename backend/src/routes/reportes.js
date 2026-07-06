@@ -843,11 +843,41 @@ router.get('/admin/correccion-resultados-preview', requireAdmin, async (req, res
     });
   }
 
+  // Categorias mutuamente excluyentes -- deben sumar exactamente `total`.
+  // Ojo: un resultado con animalito_real=null (ElSevero no trae esa hora
+  // para esa loteria/fecha, sin lanzar excepcion) tiene error_elsevero=null
+  // Y requiere_correccion=false -- eso lo hacia caer tanto en "sin_cambios"
+  // como en "sin_verificar" a la vez (bug: los numeros no sumaban el total).
+  const sinVerificar = preview.filter((p) => p.error_elsevero || !p.animalito_real).length;
+  const requierenCorreccion = preview.filter((p) => p.requiere_correccion).length;
+  const sinCambios = preview.filter((p) => !p.requiere_correccion && p.animalito_real && !p.error_elsevero).length;
+
+  // Verificacion cruzada del impacto en tickets: mismo calculo agregado
+  // (una sola query sobre TODOS los resultados_malos a la vez) que ya usa
+  // /diagnostico-fechas-sospechosas y que dio 299/252 correctamente. Si
+  // esto no coincide con la suma de impacto_tickets.total_tickets fila por
+  // fila de arriba, hay un bug real en el calculo por-fila; si coincide,
+  // los "0 de 0" que se vean en la tabla son sorteos que genuinamente no
+  // tuvieron jugadas ese dia, no un bug.
+  const impactoAgregadoReal = db.prepare(`
+    ${CTE_SOSPECHOSOS}
+    SELECT COUNT(DISTINCT t.id) AS tickets_afectados
+    FROM resultados_malos rmal
+    JOIN jugadas j ON j.sorteo_id = rmal.sorteo_id AND j.fecha_sorteo = rmal.fecha
+    JOIN tickets t ON t.jugada_id = j.id
+  `).get();
+  const sumaImpactoPorFila = preview.reduce((s, p) => s + (p.impacto_tickets?.total_tickets || 0), 0);
+
   res.json({
     total: preview.length,
-    requieren_correccion: preview.filter((p) => p.requiere_correccion).length,
-    sin_cambios: preview.filter((p) => !p.requiere_correccion && !p.error_elsevero).length,
-    sin_verificar: preview.filter((p) => p.error_elsevero || !p.animalito_real).length,
+    requieren_correccion: requierenCorreccion,
+    sin_cambios: sinCambios,
+    sin_verificar: sinVerificar,
+    verificacion_impacto: {
+      tickets_afectados_agregado_real: impactoAgregadoReal.tickets_afectados,
+      suma_total_tickets_por_fila: sumaImpactoPorFila,
+      coincide: impactoAgregadoReal.tickets_afectados === sumaImpactoPorFila,
+    },
     resultados: preview,
   });
 });
