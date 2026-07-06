@@ -319,4 +319,19 @@ function iniciar() {
   console.log('[resultadosAuto] scheduler iniciado');
 }
 
-module.exports = { iniciar };
+module.exports = {
+  iniciar,
+  // Exportados para el endpoint de diagnostico de solo lectura
+  // (GET /reportes/admin/diagnostico-resultado) -- reusan exactamente la
+  // misma logica que el scheduler real usa para leer las fuentes, en vez
+  // de reimplementar el parseo por separado (lo que podria divergir y dar
+  // un diagnostico enganoso).
+  buscarResultadoElSevero,
+  buscarResultadoLotoven,
+  descargarResultadosElSevero,
+  descargarPaginaAnimalitos,
+  extraerSeccionLoteria,
+  parsearResultados,
+  normalizarSlug,
+  normalizarHora12,
+};

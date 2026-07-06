@@ -2,6 +2,11 @@ const express = require('express');
 const db = require('../db/connection');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { fechaVenezuelaHoy } = require('../utils/fechaVenezuela');
+const {
+  buscarResultadoElSevero, buscarResultadoLotoven, descargarResultadosElSevero,
+  descargarPaginaAnimalitos, extraerSeccionLoteria, parsearResultados,
+  normalizarSlug, normalizarHora12,
+} = require('../utils/resultadosAuto');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -434,6 +439,94 @@ router.put('/configuracion', requireAdmin, (req, res) => {
   })();
 
   res.json({ mensaje: 'Configuracion guardada' });
+});
+
+// ------------------------------------------------------------
+// DIAGNOSTICO DE RESULTADOS (solo admin, solo lectura) -- compara lo
+// guardado en resultados/resultados_candidatos contra lo que las fuentes
+// externas (ElSevero, lotoven) muestran AHORA MISMO para el mismo
+// sorteo/hora/fecha. No modifica nada. Reusa las mismas funciones que
+// usa el scheduler real (resultadosAuto.js) para no reimplementar el
+// parseo por separado.
+//
+// Ej: GET /reportes/admin/diagnostico-resultado?loteria_slug=guacharoactivo&hora=08:00&fecha=2026-07-06
+// ------------------------------------------------------------
+router.get('/admin/diagnostico-resultado', requireAdmin, async (req, res) => {
+  const { loteria_slug, hora, fecha } = req.query;
+  if (!loteria_slug || !hora || !fecha) {
+    return res.status(400).json({ error: 'loteria_slug, hora y fecha son requeridos' });
+  }
+
+  const sorteo = db.prepare(
+    `SELECT s.id, s.hora, l.nombre AS loteria_nombre, l.slug AS loteria_slug
+     FROM sorteos s JOIN loterias l ON l.id = s.loteria_id
+     WHERE l.slug = ? AND s.hora = ?`
+  ).get(loteria_slug, hora);
+  if (!sorteo) {
+    return res.status(404).json({ error: `No existe un sorteo para loteria_slug="${loteria_slug}" hora="${hora}"` });
+  }
+
+  const guardadoResultado = db.prepare(
+    `SELECT r.*, a.numero AS animalito_numero, a.nombre AS animalito_nombre
+     FROM resultados r JOIN animalitos a ON a.id = r.animalito_id
+     WHERE r.sorteo_id = ? AND r.fecha = ?`
+  ).get(sorteo.id, fecha);
+
+  const guardadoCandidato = db.prepare(
+    `SELECT rc.*, a.numero AS animalito_numero, a.nombre AS animalito_nombre
+     FROM resultados_candidatos rc LEFT JOIN animalitos a ON a.id = rc.animalito_id
+     WHERE rc.sorteo_id = ? AND rc.fecha = ?`
+  ).get(sorteo.id, fecha);
+
+  const horaBuscada12h = normalizarHora12(hora);
+
+  // ElSevero: lista completa de la loteria para esta fecha, en vivo.
+  let elseveroTodos = [];
+  let elseveroError = null;
+  try {
+    const todos = await descargarResultadosElSevero(fecha);
+    elseveroTodos = todos.filter((r) => normalizarSlug(r.loteria || '') === loteria_slug);
+  } catch (err) {
+    elseveroError = err.message;
+  }
+  const elseveroMatch = elseveroTodos.find((r) => r.hora === horaBuscada12h) || null;
+
+  // Lotoven: lista completa de la loteria, en vivo -- el sitio no permite
+  // pedir una fecha especifica, siempre muestra lo que hay ahora mismo.
+  let lotovenTodos = [];
+  let lotovenError = null;
+  try {
+    const html = await descargarPaginaAnimalitos();
+    const seccion = extraerSeccionLoteria(html, loteria_slug);
+    lotovenTodos = seccion ? parsearResultados(seccion) : [];
+  } catch (err) {
+    lotovenError = err.message;
+  }
+  const lotovenMatch = lotovenTodos.find((r) => r.hora === horaBuscada12h) || null;
+
+  res.json({
+    consulta: {
+      loteria_slug, hora, fecha,
+      hora_buscada_12h: horaBuscada12h,
+      sorteo_id: sorteo.id,
+      loteria_nombre: sorteo.loteria_nombre,
+    },
+    guardado_en_bd: {
+      resultado_oficial: guardadoResultado || null,
+      candidato: guardadoCandidato || null,
+    },
+    elsevero_ahora: {
+      error: elseveroError,
+      todos_los_de_esta_loteria: elseveroTodos,
+      match_para_esta_hora: elseveroMatch,
+    },
+    lotoven_ahora: {
+      error: lotovenError,
+      nota: 'lotoven.com no permite pedir una fecha especifica -- esto es lo que la pagina muestra en este momento (normalmente "hoy" real).',
+      todos_los_de_esta_loteria: lotovenTodos,
+      match_para_esta_hora: lotovenMatch,
+    },
+  });
 });
 
 module.exports = router;
