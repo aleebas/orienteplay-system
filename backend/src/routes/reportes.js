@@ -529,4 +529,67 @@ router.get('/admin/diagnostico-resultado', requireAdmin, async (req, res) => {
   });
 });
 
+// ------------------------------------------------------------
+// DIAGNOSTICO DE FECHAS SOSPECHOSAS (solo admin, solo lectura) -- barre
+// TODA la tabla resultados_candidatos y resultados buscando la firma
+// exacta del bug de scheduling encontrado el 06/07/2026: una fila cuyo
+// momento real de creacion (convertido a Venezuela) cae en el dia
+// ANTERIOR al que la columna `fecha` dice representar. Eso solo es
+// posible si en ese momento se conservaba fecha con logica UTC nativa
+// en vez de America/Caracas -- exactamente lo que el scraper NO deberia
+// poder hacer (solo corre 3+ min despues de la hora real del sorteo).
+//
+// Para resultados_candidatos se compara contra creado_en directamente.
+// Para resultados oficiales:
+//   - fuente='auto_confirmado' -> se recupera el creado_en del
+//     candidato original (mismo sorteo_id+fecha), porque confirmado_en
+//     es el momento en que un admin lo confirmo (tipicamente horas
+//     despues) y NO refleja cuando el scraper detecto el dato.
+//   - cualquier otra fuente (carga manual) -> se usa confirmado_en
+//     directamente, para detectar el otro caso: alguien confirmando a
+//     mano un resultado para una fecha que en ese momento todavia no
+//     habia empezado.
+// ------------------------------------------------------------
+router.get('/admin/diagnostico-fechas-sospechosas', requireAdmin, (req, res) => {
+  const candidatosSospechosos = db.prepare(`
+    SELECT rc.id, l.nombre AS loteria_nombre, s.hora AS sorteo_hora, rc.fecha,
+           rc.estado, rc.intentos,
+           rc.creado_en AS timestamp_utc,
+           datetime(rc.creado_en, '-4 hours') AS timestamp_ve,
+           date(datetime(rc.creado_en, '-4 hours')) AS dia_real_creacion,
+           a.numero AS animalito_numero, a.nombre AS animalito_nombre
+    FROM resultados_candidatos rc
+    JOIN sorteos s ON s.id = rc.sorteo_id
+    JOIN loterias l ON l.id = s.loteria_id
+    LEFT JOIN animalitos a ON a.id = rc.animalito_id
+    WHERE date(datetime(rc.creado_en, '-4 hours')) < rc.fecha
+    ORDER BY rc.fecha DESC
+  `).all();
+
+  const resultadosSospechosos = db.prepare(`
+    SELECT r.id, l.nombre AS loteria_nombre, s.hora AS sorteo_hora, r.fecha, r.fuente,
+           COALESCE(rc.creado_en, r.confirmado_en) AS timestamp_utc,
+           datetime(COALESCE(rc.creado_en, r.confirmado_en), '-4 hours') AS timestamp_ve,
+           date(datetime(COALESCE(rc.creado_en, r.confirmado_en), '-4 hours')) AS dia_real_creacion,
+           r.confirmado_en,
+           a.numero AS animalito_numero, a.nombre AS animalito_nombre
+    FROM resultados r
+    JOIN sorteos s ON s.id = r.sorteo_id
+    JOIN loterias l ON l.id = s.loteria_id
+    JOIN animalitos a ON a.id = r.animalito_id
+    LEFT JOIN resultados_candidatos rc ON rc.sorteo_id = r.sorteo_id AND rc.fecha = r.fecha
+    WHERE date(datetime(COALESCE(rc.creado_en, r.confirmado_en), '-4 hours')) < r.fecha
+    ORDER BY r.fecha DESC
+  `).all();
+
+  res.json({
+    resumen: {
+      total_candidatos_sospechosos: candidatosSospechosos.length,
+      total_resultados_sospechosos: resultadosSospechosos.length,
+    },
+    candidatos_sospechosos: candidatosSospechosos,
+    resultados_sospechosos: resultadosSospechosos,
+  });
+});
+
 module.exports = router;
