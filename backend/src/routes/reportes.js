@@ -746,4 +746,169 @@ router.get('/admin/diagnostico-pagos-sospechosos', requireAdmin, async (req, res
   res.json({ pagos_sospechosos: detalle });
 });
 
+// ------------------------------------------------------------
+// CORRECCION GUIADA DE RESULTADOS SOSPECHOSOS -- Paso A: preview
+// (solo admin, solo lectura). Para cada resultado oficial sospechoso,
+// re-consulta ElSevero con la FECHA HISTORICA especifica de ese sorteo
+// (a diferencia de lotoven, ElSevero si acepta fecha como parametro) y
+// compara contra lo guardado. Si difieren, calcula ademas cuantos
+// tickets cambiarian de estado si se corrigiera (informativo -- este
+// endpoint NO modifica nada, ni resultados ni tickets). Los tickets
+// 'anulado' nunca se recalculan (quedan anulados sin importar el
+// resultado real). Los 'pagado' que cambiarian a algo != 'ganador' se
+// cuentan aparte por ser el caso mas critico (dinero ya entregado).
+// ------------------------------------------------------------
+router.get('/admin/correccion-resultados-preview', requireAdmin, async (req, res) => {
+  const resultadosMalos = db.prepare(`
+    ${CTE_SOSPECHOSOS}
+    SELECT rmal.id, rmal.sorteo_id, rmal.fecha, rmal.animalito_id,
+           l.nombre AS loteria_nombre, l.slug AS loteria_slug, s.hora AS sorteo_hora,
+           ag.numero AS numero_actual, ag.nombre AS nombre_actual
+    FROM resultados_malos rmal
+    JOIN sorteos s ON s.id = rmal.sorteo_id
+    JOIN loterias l ON l.id = s.loteria_id
+    JOIN animalitos ag ON ag.id = rmal.animalito_id
+    ORDER BY rmal.fecha DESC, s.hora
+  `).all();
+
+  const getAnimalitoIdPorNumero = db.prepare(
+    `SELECT id FROM animalitos WHERE loteria_id = (SELECT loteria_id FROM sorteos WHERE id = ?) AND numero = ?`
+  );
+  const getJugadasTickets = db.prepare(`
+    SELECT j.id AS jugada_id, t.id AS ticket_id, t.estado AS estado_actual
+    FROM jugadas j JOIN tickets t ON t.jugada_id = j.id
+    WHERE j.sorteo_id = ? AND j.fecha_sorteo = ?
+  `);
+  const getAnimalitosDeJugada = db.prepare(`SELECT animalito_id FROM jugada_animalitos WHERE jugada_id = ?`);
+
+  const preview = [];
+  for (const r of resultadosMalos) {
+    let animalitoReal = null;
+    let errorElSevero = null;
+    try {
+      const todos = await descargarResultadosElSevero(r.fecha);
+      const horaBuscada = normalizarHora12(r.sorteo_hora);
+      const match = todos.find((x) => normalizarSlug(x.loteria || '') === r.loteria_slug && x.hora === horaBuscada);
+      animalitoReal = match ? { numero: String(match.numero), nombre: String(match.nombre).toUpperCase() } : null;
+    } catch (err) {
+      errorElSevero = err.message;
+    }
+
+    const requiereCorreccion = !!(animalitoReal && animalitoReal.numero !== r.numero_actual);
+    let animalitoIdCorrecto = null;
+    if (requiereCorreccion) {
+      const fila = getAnimalitoIdPorNumero.get(r.sorteo_id, animalitoReal.numero);
+      animalitoIdCorrecto = fila ? fila.id : null;
+    }
+
+    let impacto = null;
+    if (requiereCorreccion && animalitoIdCorrecto) {
+      const jugadas = getJugadasTickets.all(r.sorteo_id, r.fecha);
+      const cambiosMap = new Map();
+      let pagadosQueCambiarian = 0;
+      for (const j of jugadas) {
+        if (j.estado_actual === 'anulado') continue; // nunca se recalcula
+        const apostados = getAnimalitosDeJugada.all(j.jugada_id).map((a) => a.animalito_id);
+        const ganaria = apostados.every((id) => id === animalitoIdCorrecto);
+        const estadoPropuesto = ganaria ? 'ganador' : 'perdedor';
+        if (estadoPropuesto !== j.estado_actual) {
+          const key = `${j.estado_actual}->${estadoPropuesto}`;
+          cambiosMap.set(key, (cambiosMap.get(key) || 0) + 1);
+          if (j.estado_actual === 'pagado' && estadoPropuesto !== 'ganador') pagadosQueCambiarian++;
+        }
+      }
+      impacto = {
+        total_tickets: jugadas.length,
+        cambiarian_de_estado: Array.from(cambiosMap.values()).reduce((s, n) => s + n, 0),
+        detalle: Array.from(cambiosMap.entries()).map(([k, cantidad]) => {
+          const [estado_actual, estado_propuesto] = k.split('->');
+          return { estado_actual, estado_propuesto, cantidad };
+        }),
+        pagados_que_cambiarian: pagadosQueCambiarian,
+      };
+    }
+
+    preview.push({
+      resultado_id: r.id,
+      sorteo_id: r.sorteo_id,
+      fecha: r.fecha,
+      loteria_nombre: r.loteria_nombre,
+      sorteo_hora: r.sorteo_hora,
+      animalito_actual: { numero: r.numero_actual, nombre: r.nombre_actual },
+      animalito_real: animalitoReal,
+      error_elsevero: errorElSevero,
+      requiere_correccion: requiereCorreccion,
+      animalito_id_correcto: animalitoIdCorrecto,
+      impacto_tickets: impacto,
+    });
+  }
+
+  res.json({
+    total: preview.length,
+    requieren_correccion: preview.filter((p) => p.requiere_correccion).length,
+    sin_cambios: preview.filter((p) => !p.requiere_correccion && !p.error_elsevero).length,
+    sin_verificar: preview.filter((p) => p.error_elsevero || !p.animalito_real).length,
+    resultados: preview,
+  });
+});
+
+// ------------------------------------------------------------
+// CORRECCION GUIADA DE RESULTADOS SOSPECHOSOS -- Paso B: aplicar
+// (solo admin). Recibe la lista EXACTA de correcciones que el admin
+// revisó en el preview (resultado_id + animalito_id_correcto, tal
+// cual se mostraron ahí -- no se vuelve a consultar ElSevero acá, para
+// que lo que se aplica sea exactamente lo que el admin confirmó, no
+// "lo que ElSevero diga en este momento"). Solo actualiza
+// resultados.animalito_id -- los tickets se recalculan en un paso
+// aparte (Paso 3), con su propia confirmación explícita.
+// ------------------------------------------------------------
+router.post('/admin/correccion-resultados-aplicar', requireAdmin, (req, res) => {
+  const { correcciones, confirmacion } = req.body;
+  if (confirmacion !== 'CONFIRMAR CORRECCION') {
+    return res.status(400).json({ error: 'Debes enviar confirmacion exacta "CONFIRMAR CORRECCION" para continuar' });
+  }
+  if (!Array.isArray(correcciones) || correcciones.length === 0) {
+    return res.status(400).json({ error: 'correcciones debe ser un arreglo no vacio de { resultado_id, animalito_id_correcto }' });
+  }
+
+  const getResultado = db.prepare(`SELECT * FROM resultados WHERE id = ?`);
+  const getAnimalito = db.prepare(`SELECT * FROM animalitos WHERE id = ?`);
+  const getSorteo = db.prepare(`SELECT * FROM sorteos WHERE id = ?`);
+  const updateResultado = db.prepare(`UPDATE resultados SET animalito_id = ? WHERE id = ?`);
+
+  const aplicar = db.transaction(() => {
+    const aplicados = [];
+    for (const c of correcciones) {
+      const resultado = getResultado.get(c.resultado_id);
+      if (!resultado) throw new Error(`Resultado ${c.resultado_id} no encontrado`);
+
+      const animalito = getAnimalito.get(c.animalito_id_correcto);
+      if (!animalito) throw new Error(`Animalito ${c.animalito_id_correcto} no encontrado`);
+
+      const sorteo = getSorteo.get(resultado.sorteo_id);
+      if (animalito.loteria_id !== sorteo.loteria_id) {
+        throw new Error(`El animalito ${c.animalito_id_correcto} no pertenece a la loteria del resultado ${c.resultado_id}`);
+      }
+
+      updateResultado.run(c.animalito_id_correcto, c.resultado_id);
+      aplicados.push({
+        resultado_id: c.resultado_id,
+        animalito_anterior: resultado.animalito_id,
+        animalito_nuevo: c.animalito_id_correcto,
+      });
+    }
+    return aplicados;
+  });
+
+  try {
+    const aplicados = aplicar();
+    res.json({
+      mensaje: `${aplicados.length} resultado(s) corregido(s). Los tickets todavía NO fueron recalculados (eso es el paso siguiente).`,
+      aplicados,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -20,6 +20,8 @@ import {
   guardarConfiguracion,
   getDiagnosticoFechasSospechosas,
   getDiagnosticoPagosSospechosos,
+  getCorreccionResultadosPreview,
+  aplicarCorreccionResultados,
 } from '../api/cliente';
 import { fechaHoyVenezuela, hora12 } from '../utils/formato';
 
@@ -76,6 +78,15 @@ export default function Reportes() {
   const [pagosSospechosos, setPagosSospechosos] = useState(null);
   const [loadingPagosSospechosos, setLoadingPagosSospechosos] = useState(false);
   const [errorPagosSospechosos, setErrorPagosSospechosos] = useState('');
+
+  // Corrección guiada de resultados (Paso 2)
+  const [correccionPreview, setCorreccionPreview] = useState(null);
+  const [loadingCorreccionPreview, setLoadingCorreccionPreview] = useState(false);
+  const [errorCorreccionPreview, setErrorCorreccionPreview] = useState('');
+  const [seleccionCorreccion, setSeleccionCorreccion] = useState(new Set());
+  const [textoConfirmacionCorreccion, setTextoConfirmacionCorreccion] = useState('');
+  const [aplicandoCorreccion, setAplicandoCorreccion] = useState(false);
+  const [resultadoCorreccion, setResultadoCorreccion] = useState('');
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
@@ -238,6 +249,55 @@ export default function Reportes() {
       setErrorPagosSospechosos(err.message || 'No se pudo cargar el detalle de pagos');
     } finally {
       setLoadingPagosSospechosos(false);
+    }
+  }
+
+  async function handleVerCorreccionPreview() {
+    setLoadingCorreccionPreview(true);
+    setErrorCorreccionPreview('');
+    setResultadoCorreccion('');
+    try {
+      const data = await getCorreccionResultadosPreview();
+      setCorreccionPreview(data);
+      // Pre-seleccionar todos los que requieren correccion y tienen un
+      // animalito_id_correcto verificado -- el admin puede desmarcar
+      // los que no quiera aplicar todavia.
+      setSeleccionCorreccion(new Set(
+        data.resultados.filter(r => r.requiere_correccion && r.animalito_id_correcto).map(r => r.resultado_id)
+      ));
+    } catch (err) {
+      setErrorCorreccionPreview(err.message || 'No se pudo cargar la propuesta de corrección');
+    } finally {
+      setLoadingCorreccionPreview(false);
+    }
+  }
+
+  function toggleSeleccionCorreccion(resultadoId) {
+    setSeleccionCorreccion(prev => {
+      const next = new Set(prev);
+      if (next.has(resultadoId)) next.delete(resultadoId);
+      else next.add(resultadoId);
+      return next;
+    });
+  }
+
+  async function handleAplicarCorreccion() {
+    if (textoConfirmacionCorreccion !== 'CONFIRMAR CORRECCION') return;
+    if (!confirm(`¿Aplicar la corrección a ${seleccionCorreccion.size} resultado(s)? Esta acción no se puede deshacer directamente.`)) return;
+    setAplicandoCorreccion(true);
+    setResultadoCorreccion('');
+    try {
+      const correcciones = correccionPreview.resultados
+        .filter(r => seleccionCorreccion.has(r.resultado_id))
+        .map(r => ({ resultado_id: r.resultado_id, animalito_id_correcto: r.animalito_id_correcto }));
+      const res = await aplicarCorreccionResultados(correcciones, textoConfirmacionCorreccion);
+      setResultadoCorreccion(res.mensaje);
+      setTextoConfirmacionCorreccion('');
+      handleVerCorreccionPreview();
+    } catch (err) {
+      setResultadoCorreccion('Error: ' + err.message);
+    } finally {
+      setAplicandoCorreccion(false);
     }
   }
 
@@ -1057,6 +1117,137 @@ export default function Reportes() {
                 </table>
               )}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Corrección guiada de resultados sospechosos (Paso 2) */}
+      {tab === 'diagnostico' && esAdmin && (
+        <div className="card">
+          <h2>Corrección guiada de resultados sospechosos</h2>
+          <p className="text-muted text-sm mb-12">
+            Para cada resultado oficial sospechoso, re-consulta ElSevero con la fecha histórica exacta de
+            ese sorteo y compara contra lo guardado. Este paso solo corrige la tabla de resultados — los
+            tickets NO se recalculan acá (eso es un paso aparte, con su propia confirmación).
+          </p>
+          {errorCorreccionPreview && <div className="alert alert-danger">{errorCorreccionPreview}</div>}
+          {resultadoCorreccion && (
+            <div className={`alert ${resultadoCorreccion.startsWith('Error') ? 'alert-danger' : 'alert-success'}`}>
+              {resultadoCorreccion}
+            </div>
+          )}
+          <button className="btn btn-primary" onClick={handleVerCorreccionPreview} disabled={loadingCorreccionPreview}>
+            {loadingCorreccionPreview ? 'Consultando ElSevero...' : '🔍 Ver propuesta de corrección'}
+          </button>
+
+          {correccionPreview && (
+            <>
+              <div className="metrics-grid" style={{ marginTop: 16 }}>
+                <div className="resumen-item">
+                  <div className="resumen-valor">{correccionPreview.total}</div>
+                  <div className="resumen-label">Total revisados</div>
+                </div>
+                <div className="resumen-item">
+                  <div className="resumen-valor" style={{ color: correccionPreview.requieren_correccion > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                    {correccionPreview.requieren_correccion}
+                  </div>
+                  <div className="resumen-label">Requieren corrección</div>
+                </div>
+                <div className="resumen-item">
+                  <div className="resumen-valor" style={{ color: 'var(--success)' }}>{correccionPreview.sin_cambios}</div>
+                  <div className="resumen-label">Sin cambios (coincidencia)</div>
+                </div>
+                <div className="resumen-item">
+                  <div className="resumen-valor" style={{ color: 'var(--warning)' }}>{correccionPreview.sin_verificar}</div>
+                  <div className="resumen-label">No se pudo verificar</div>
+                </div>
+              </div>
+
+              {correccionPreview.resultados.filter(r => r.requiere_correccion).length === 0 ? (
+                <p className="text-muted text-sm" style={{ marginTop: 16 }}>Ningún resultado requiere corrección.</p>
+              ) : (
+                <>
+                  <div className="tabla-wrap" style={{ marginTop: 16 }}>
+                    <table className="tabla">
+                      <thead>
+                        <tr>
+                          <th></th>
+                          <th>Fecha</th>
+                          <th>Lotería · Hora</th>
+                          <th>Actual (malo)</th>
+                          <th>Real (ElSevero)</th>
+                          <th>Tickets afectados</th>
+                          <th>Ya pagados que cambiarían</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {correccionPreview.resultados.filter(r => r.requiere_correccion).map(r => (
+                          <tr
+                            key={r.resultado_id}
+                            style={r.impacto_tickets?.pagados_que_cambiarian > 0 ? { background: 'var(--danger-light)' } : undefined}
+                          >
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={seleccionCorreccion.has(r.resultado_id)}
+                                disabled={!r.animalito_id_correcto}
+                                onChange={() => toggleSeleccionCorreccion(r.resultado_id)}
+                              />
+                            </td>
+                            <td>{r.fecha}</td>
+                            <td>{r.loteria_nombre} · {hora12(r.sorteo_hora)}</td>
+                            <td>{r.animalito_actual.numero}-{r.animalito_actual.nombre}</td>
+                            <td>
+                              {r.animalito_id_correcto ? (
+                                `${r.animalito_real.numero}-${r.animalito_real.nombre}`
+                              ) : (
+                                <span className="text-muted">
+                                  No encontrado en catálogo{r.error_elsevero ? ` (${r.error_elsevero})` : ''}
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              {r.impacto_tickets ? (
+                                <span className="text-sm">
+                                  {r.impacto_tickets.cambiarian_de_estado} de {r.impacto_tickets.total_tickets} —{' '}
+                                  {r.impacto_tickets.detalle.map(d => `${d.estado_actual}→${d.estado_propuesto}: ${d.cantidad}`).join(', ')}
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td>
+                              {r.impacto_tickets?.pagados_que_cambiarian > 0 ? (
+                                <span className="badge badge-danger">{r.impacto_tickets.pagados_que_cambiarian}</span>
+                              ) : '0'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="field" style={{ marginTop: 16 }}>
+                    <label>Escribe "CONFIRMAR CORRECCION" para habilitar el botón ({seleccionCorreccion.size} seleccionado(s))</label>
+                    <input
+                      type="text"
+                      value={textoConfirmacionCorreccion}
+                      onChange={e => setTextoConfirmacionCorreccion(e.target.value)}
+                      placeholder="CONFIRMAR CORRECCION"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <button
+                    className="btn btn-danger"
+                    style={{ marginTop: 8 }}
+                    disabled={textoConfirmacionCorreccion !== 'CONFIRMAR CORRECCION' || aplicandoCorreccion || seleccionCorreccion.size === 0}
+                    onClick={handleAplicarCorreccion}
+                  >
+                    {aplicandoCorreccion ? 'Aplicando...' : `✓ Corregir ${seleccionCorreccion.size} resultado(s) seleccionado(s)`}
+                  </button>
+                </>
+              )}
+            </>
           )}
         </div>
       )}

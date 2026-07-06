@@ -179,4 +179,10 @@ export const getDiagnosticoFechasSospechosas = () =>
 export const getDiagnosticoPagosSospechosos = () =>
   req('GET', '/reportes/admin/diagnostico-pagos-sospechosos');
 
+export const getCorreccionResultadosPreview = () =>
+  req('GET', '/reportes/admin/correccion-resultados-preview');
+
+export const aplicarCorreccionResultados = (correcciones, confirmacion) =>
+  req('POST', '/reportes/admin/correccion-resultados-aplicar', { correcciones, confirmacion });
+
 export const API = { get: (path) => req('GET', path) };
