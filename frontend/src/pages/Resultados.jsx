@@ -5,9 +5,8 @@ import {
 } from '../api/cliente';
 import { useAuth } from '../context/AuthContext';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
-import { hora12, fechaHoyVenezuela } from '../utils/formato';
-
-const TODAY = fechaHoyVenezuela();
+import { hora12 } from '../utils/formato';
+import { useFechaAutoHoy } from '../hooks/useFechaAutoHoy';
 
 function sorteoYaPaso(hora) {
   const ahora = new Date();
@@ -29,7 +28,7 @@ export default function Resultados() {
   const [animalito, setAnimalito] = useState(null);
   const [error, setError] = useState('');
   const [exito, setExito] = useState('');
-  const [fecha, setFecha] = useState(TODAY);
+  const [fecha, setFechaManual] = useFechaAutoHoy();
 
   const [candidatos, setCandidatos] = useState([]);
   const [procesandoCandidato, setProcesandoCandidato] = useState(null);
@@ -150,7 +149,7 @@ export default function Resultados() {
         <input
           type="date"
           value={fecha}
-          onChange={e => setFecha(e.target.value)}
+          onChange={e => setFechaManual(e.target.value)}
           style={{ border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 10px', fontSize: '0.875rem' }}
         />
       </div>

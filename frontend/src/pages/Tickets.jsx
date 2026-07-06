@@ -1,27 +1,30 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado, pagarPremio, getConfiguracion } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import ModalPagoDigital from '../components/ModalPagoDigital';
-import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
+import { hora12, fmt, horaVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
 import { useAuth } from '../context/AuthContext';
+import { useFechaAutoHoy } from '../hooks/useFechaAutoHoy';
 
-const TODAY = fechaHoyVenezuela();
 const MINUTOS_LIMITE_ANULACION = 20;
 const METODOS_DIGITALES = ['pago_movil', 'biopago'];
 
 // Misma regla que el backend (POST /api/jugadas/anular/:codigoVenta):
 // pendiente + menos de 20 min desde la venta + sorteo aun no empieza.
-function puedeAnular(t) {
-  if (t.estado !== 'pendiente') return false;
+// Devuelve null si es anulable, o el motivo por el que no lo es (para
+// poder explicarle al operador por que el boton de la venta esta apagado).
+function motivoNoAnulable(t) {
+  if (t.estado !== 'pendiente') return `el ticket ${t.ticket_codigo} ya está en estado "${t.estado}"`;
   const creadaEnUTC = new Date(t.creada_en.replace(' ', 'T') + 'Z');
   const minutos = (Date.now() - creadaEnUTC.getTime()) / 60000;
-  if (minutos > MINUTOS_LIMITE_ANULACION) return false;
+  if (minutos > MINUTOS_LIMITE_ANULACION) return `ya pasaron más de ${MINUTOS_LIMITE_ANULACION} minutos desde la venta`;
   const [h, m] = t.sorteo_hora.split(':').map(Number);
   const ahora = new Date();
   const horaSorteo = new Date(ahora);
   horaSorteo.setHours(h, m, 0, 0);
-  return ahora < horaSorteo;
+  if (ahora >= horaSorteo) return `el sorteo de las ${hora12(t.sorteo_hora)} ya comenzó`;
+  return null;
 }
 
 const ESTADOS = [
@@ -53,7 +56,7 @@ export default function Tickets() {
   const [error, setError] = useState('');
   const [estadoFiltro, setEstadoFiltro] = useState('todos');
   const [busqueda, setBusqueda] = useState('');
-  const [fechaFiltro, setFechaFiltro] = useState(TODAY);
+  const [fechaFiltro, setFechaFiltroManual] = useFechaAutoHoy();
 
   const [ticketDetalle, setTicketDetalle] = useState(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
@@ -131,6 +134,23 @@ export default function Tickets() {
     if (estadoFiltro === 'todos') return lista;
     return lista.filter(t => t.estado === estadoFiltro);
   }, [lista, estadoFiltro]);
+
+  // Agrupa filas consecutivas con el mismo venta_codigo. El backend ya
+  // ordena por creada_en DESC, v.codigo, y las jugadas de una misma venta
+  // comparten el mismo creada_en (misma transaccion), asi que siempre
+  // quedan adyacentes -- no hace falta reordenar nada aca.
+  const grupos = useMemo(() => {
+    const out = [];
+    for (const t of filtrados) {
+      const ultimo = out[out.length - 1];
+      if (ultimo && ultimo.venta_codigo === t.venta_codigo) {
+        ultimo.jugadas.push(t);
+      } else {
+        out.push({ venta_codigo: t.venta_codigo, creada_en: t.creada_en, jugadas: [t] });
+      }
+    }
+    return out;
+  }, [filtrados]);
 
   async function handleAnular(t) {
     const relacionados = lista.filter(x => x.venta_codigo === t.venta_codigo);
@@ -333,7 +353,7 @@ export default function Tickets() {
             <input
               type="date"
               value={fechaFiltro}
-              onChange={e => setFechaFiltro(e.target.value)}
+              onChange={e => setFechaFiltroManual(e.target.value)}
               disabled={!!busqueda.trim()}
             />
           </div>
@@ -354,7 +374,7 @@ export default function Tickets() {
             <table className="tabla">
               <thead>
                 <tr>
-                  <th>Código</th>
+                  <th>Venta / Ticket</th>
                   <th>Hora</th>
                   <th>Lotería</th>
                   <th>Animalito(s)</th>
@@ -364,31 +384,63 @@ export default function Tickets() {
                 </tr>
               </thead>
               <tbody>
-                {filtrados.length === 0 ? (
+                {grupos.length === 0 ? (
                   <tr><td colSpan={7} className="text-center text-muted">Sin tickets</td></tr>
-                ) : filtrados.map(t => (
-                  <tr key={t.ticket_id} onClick={() => verDetalle(t.ticket_codigo)} style={{ cursor: 'pointer' }}>
-                    <td className="bold">{t.ticket_codigo}</td>
-                    <td>{hora12(t.sorteo_hora)}</td>
-                    <td>{t.loteria_nombre}</td>
-                    <td>{t.animalitos}</td>
-                    <td className="bold text-primary">{fmt(t.monto)}</td>
-                    <td>
-                      <span className={`badge ${badgeClase(t.estado)}`}>{t.estado}</span>
-                    </td>
-                    <td>
-                      {puedeAnular(t) && (
-                        <button
-                          className="btn btn-danger btn-sm btn-inline"
-                          disabled={anulandoVenta === t.venta_codigo}
-                          onClick={e => { e.stopPropagation(); handleAnular(t); }}
-                        >
-                          {anulandoVenta === t.venta_codigo ? '...' : 'Anular'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                ) : grupos.map(grupo => {
+                  // Relacionados: TODAS las jugadas de la venta (no solo las
+                  // visibles tras el filtro de estado) -- la anulacion valida
+                  // el estado real de cada una en el backend, asi que el
+                  // boton debe reflejar esa realidad completa, no la vista
+                  // filtrada.
+                  const relacionados = lista.filter(x => x.venta_codigo === grupo.venta_codigo);
+                  const totalGrupo = grupo.jugadas.reduce((s, x) => s + x.monto, 0);
+                  const motivosBloqueo = relacionados.map(motivoNoAnulable).filter(Boolean);
+                  const anulableGrupo = motivosBloqueo.length === 0;
+                  return (
+                    <Fragment key={grupo.venta_codigo}>
+                      <tr>
+                        <td colSpan={7} style={{ background: '#f5f5f5', borderRadius: 'var(--radius)' }}>
+                          <div className="flex justify-between align-center" style={{ flexWrap: 'wrap', gap: 8 }}>
+                            <div>
+                              <span className="bold">{grupo.venta_codigo}</span>
+                              <span className="text-muted text-sm" style={{ marginLeft: 8 }}>
+                                {horaVenezuela(grupo.creada_en)} · Total {fmt(totalGrupo)}
+                              </span>
+                            </div>
+                            {anulableGrupo ? (
+                              <button
+                                className="btn btn-danger btn-sm btn-inline"
+                                disabled={anulandoVenta === grupo.venta_codigo}
+                                onClick={() => handleAnular(relacionados[0])}
+                              >
+                                {anulandoVenta === grupo.venta_codigo ? '...' : 'Anular venta'}
+                              </button>
+                            ) : (
+                              <span className="text-muted text-sm" title={motivosBloqueo[0]}>
+                                No anulable: {motivosBloqueo[0]}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {grupo.jugadas.map(t => (
+                        <tr key={t.ticket_id} onClick={() => verDetalle(t.ticket_codigo)} style={{ cursor: 'pointer' }}>
+                          <td style={{ paddingLeft: 24 }}>
+                            <span className="text-muted text-sm" style={{ fontFamily: 'monospace' }}>{t.ticket_codigo}</span>
+                          </td>
+                          <td>{hora12(t.sorteo_hora)}</td>
+                          <td>{t.loteria_nombre}</td>
+                          <td>{t.animalitos}</td>
+                          <td className="bold text-primary">{fmt(t.monto)}</td>
+                          <td>
+                            <span className={`badge ${badgeClase(t.estado)}`}>{t.estado}</span>
+                          </td>
+                          <td></td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

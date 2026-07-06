@@ -216,7 +216,7 @@ router.get('/', (req, res) => {
     JOIN animalitos a ON a.id = ja.animalito_id
     WHERE ${where}
     GROUP BY j.id
-    ORDER BY j.creada_en DESC
+    ORDER BY j.creada_en DESC, v.codigo
   `).all(...params);
 
   res.json(rows);
