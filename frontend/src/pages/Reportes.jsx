@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   getReporteVentasPorDia,
@@ -22,6 +22,7 @@ import {
   getDiagnosticoPagosSospechosos,
   getCorreccionResultadosPreview,
   aplicarCorreccionResultados,
+  getTicketsDeResultado,
 } from '../api/cliente';
 import { fechaHoyVenezuela, hora12 } from '../utils/formato';
 
@@ -88,6 +89,7 @@ export default function Reportes() {
   const [aplicandoCorreccion, setAplicandoCorreccion] = useState(false);
   const [resultadoCorreccion, setResultadoCorreccion] = useState('');
   const [soloConTicketsAfectados, setSoloConTicketsAfectados] = useState(true);
+  const [ticketsExpandidos, setTicketsExpandidos] = useState({}); // resultado_id -> { loading, error, data }
 
   // Usuarios
   const [usuarios, setUsuarios] = useState([]);
@@ -280,6 +282,26 @@ export default function Reportes() {
       else next.add(resultadoId);
       return next;
     });
+  }
+
+  async function toggleTicketsResultado(resultadoId) {
+    setTicketsExpandidos(prev => {
+      if (prev[resultadoId]) {
+        // ya esta abierto (o cargando/con error) -- cerrar
+        const next = { ...prev };
+        delete next[resultadoId];
+        return next;
+      }
+      return { ...prev, [resultadoId]: { loading: true, error: '', data: null } };
+    });
+    if (ticketsExpandidos[resultadoId]) return; // se acaba de cerrar arriba
+
+    try {
+      const data = await getTicketsDeResultado(resultadoId);
+      setTicketsExpandidos(prev => ({ ...prev, [resultadoId]: { loading: false, error: '', data } }));
+    } catch (err) {
+      setTicketsExpandidos(prev => ({ ...prev, [resultadoId]: { loading: false, error: err.message || 'No se pudo cargar', data: null } }));
+    }
   }
 
   async function handleAplicarCorreccion() {
@@ -1207,54 +1229,118 @@ export default function Reportes() {
                             <th>Real (ElSevero)</th>
                             <th>Tickets afectados</th>
                             <th>Ya pagados que cambiarían</th>
+                            <th></th>
                           </tr>
                         </thead>
                         <tbody>
                           {filasVisibles.length === 0 ? (
-                            <tr><td colSpan={7} className="text-center text-muted">Sin filas con tickets afectados</td></tr>
-                          ) : filasVisibles.map(r => (
-                          <tr
-                            key={r.resultado_id}
-                            style={r.impacto_tickets?.pagados_que_cambiarian > 0 ? { background: 'var(--danger-light)' } : undefined}
-                          >
-                            <td>
-                              <input
-                                type="checkbox"
-                                checked={seleccionCorreccion.has(r.resultado_id)}
-                                disabled={!r.animalito_id_correcto}
-                                onChange={() => toggleSeleccionCorreccion(r.resultado_id)}
-                              />
-                            </td>
-                            <td>{r.fecha}</td>
-                            <td>{r.loteria_nombre} · {hora12(r.sorteo_hora)}</td>
-                            <td>{r.animalito_actual.numero}-{r.animalito_actual.nombre}</td>
-                            <td>
-                              {r.animalito_id_correcto ? (
-                                `${r.animalito_real.numero}-${r.animalito_real.nombre}`
-                              ) : (
-                                <span className="text-muted">
-                                  No encontrado en catálogo{r.error_elsevero ? ` (${r.error_elsevero})` : ''}
-                                </span>
+                            <tr><td colSpan={8} className="text-center text-muted">Sin filas con tickets afectados</td></tr>
+                          ) : filasVisibles.map(r => {
+                            const expandido = ticketsExpandidos[r.resultado_id];
+                            return (
+                            <Fragment key={r.resultado_id}>
+                              <tr style={r.impacto_tickets?.pagados_que_cambiarian > 0 ? { background: 'var(--danger-light)' } : undefined}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={seleccionCorreccion.has(r.resultado_id)}
+                                    disabled={!r.animalito_id_correcto}
+                                    onChange={() => toggleSeleccionCorreccion(r.resultado_id)}
+                                  />
+                                </td>
+                                <td>{r.fecha}</td>
+                                <td>{r.loteria_nombre} · {hora12(r.sorteo_hora)}</td>
+                                <td>{r.animalito_actual.numero}-{r.animalito_actual.nombre}</td>
+                                <td>
+                                  {r.animalito_id_correcto ? (
+                                    `${r.animalito_real.numero}-${r.animalito_real.nombre}`
+                                  ) : (
+                                    <span className="text-muted">
+                                      No encontrado en catálogo{r.error_elsevero ? ` (${r.error_elsevero})` : ''}
+                                    </span>
+                                  )}
+                                </td>
+                                <td>
+                                  {r.impacto_tickets ? (
+                                    <span className="text-sm">
+                                      {r.impacto_tickets.cambiarian_de_estado} de {r.impacto_tickets.total_tickets} —{' '}
+                                      {r.impacto_tickets.detalle.map(d => `${d.estado_actual}→${d.estado_propuesto}: ${d.cantidad}`).join(', ')}
+                                    </span>
+                                  ) : '—'}
+                                </td>
+                                <td>
+                                  {r.impacto_tickets?.pagados_que_cambiarian > 0 ? (
+                                    <span className="badge badge-danger">{r.impacto_tickets.pagados_que_cambiarian}</span>
+                                  ) : '0'}
+                                </td>
+                                <td>
+                                  {(r.impacto_tickets?.total_tickets || 0) > 0 && (
+                                    <button
+                                      className="btn btn-outline btn-sm btn-inline"
+                                      onClick={() => toggleTicketsResultado(r.resultado_id)}
+                                    >
+                                      {expandido ? 'Ocultar' : 'Ver tickets'}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                              {expandido && (
+                                <tr>
+                                  <td colSpan={8} style={{ background: '#fafafa', padding: 12 }}>
+                                    {expandido.loading ? (
+                                      <div className="loading"><div className="spinner"></div></div>
+                                    ) : expandido.error ? (
+                                      <div className="alert alert-danger">{expandido.error}</div>
+                                    ) : (
+                                      <table className="tabla">
+                                        <thead>
+                                          <tr>
+                                            <th>Ticket</th>
+                                            <th>Venta</th>
+                                            <th>Cliente</th>
+                                            <th>Apostó</th>
+                                            <th style={{ textAlign: 'right' }}>Monto</th>
+                                            <th>Estado actual → propuesto</th>
+                                            <th>¿Ya pagado?</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {expandido.data.tickets.map(t => (
+                                            <tr key={t.ticket_codigo}>
+                                              <td className="bold">{t.ticket_codigo}</td>
+                                              <td>{t.venta_codigo}</td>
+                                              <td>
+                                                {t.cliente_nombre || <span className="text-muted">Sin datos</span>}
+                                                {t.cliente_telefono ? ` · ${t.cliente_telefono}` : ''}
+                                              </td>
+                                              <td>{t.animalitos_apostados.map(a => `${a.numero}-${a.nombre}`).join(', ')}</td>
+                                              <td style={{ textAlign: 'right' }}>{fmt(t.monto)}</td>
+                                              <td>
+                                                <span className={`badge ${t.cambia ? 'badge-warning' : 'badge-muted'}`}>
+                                                  {t.estado_actual} → {t.estado_propuesto}
+                                                </span>
+                                              </td>
+                                              <td>
+                                                {t.ya_pagado ? (
+                                                  <span className="badge badge-danger">Sí — {fmt(t.pago.monto_pagado)}</span>
+                                                ) : (
+                                                  <span className="badge badge-success">No</span>
+                                                )}
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    )}
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td>
-                              {r.impacto_tickets ? (
-                                <span className="text-sm">
-                                  {r.impacto_tickets.cambiarian_de_estado} de {r.impacto_tickets.total_tickets} —{' '}
-                                  {r.impacto_tickets.detalle.map(d => `${d.estado_actual}→${d.estado_propuesto}: ${d.cantidad}`).join(', ')}
-                                </span>
-                              ) : '—'}
-                            </td>
-                            <td>
-                              {r.impacto_tickets?.pagados_que_cambiarian > 0 ? (
-                                <span className="badge badge-danger">{r.impacto_tickets.pagados_que_cambiarian}</span>
-                              ) : '0'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                            </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
 
                   <div className="field" style={{ marginTop: 16 }}>
                     <label>Escribe "CONFIRMAR CORRECCION" para habilitar el botón ({seleccionCorreccion.size} seleccionado(s))</label>

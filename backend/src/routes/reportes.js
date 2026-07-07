@@ -893,6 +893,90 @@ router.get('/admin/correccion-resultados-preview', requireAdmin, async (req, res
 });
 
 // ------------------------------------------------------------
+// DETALLE DE TICKETS DE UN RESULTADO ESPECIFICO (solo admin, solo
+// lectura) -- para revisar caso por caso (cliente, monto, si ya tiene
+// pago) antes de decidir aplicar la correccion sobre ese sorteo/fecha.
+// Recalcula el animalito real/correcto igual que el preview general.
+// ------------------------------------------------------------
+router.get('/admin/correccion-resultados-preview/:resultadoId/tickets', requireAdmin, async (req, res) => {
+  const resultado = db.prepare(`SELECT * FROM resultados WHERE id = ?`).get(req.params.resultadoId);
+  if (!resultado) return res.status(404).json({ error: 'Resultado no encontrado' });
+
+  const sorteo = db.prepare(
+    `SELECT s.*, l.nombre AS loteria_nombre, l.slug AS loteria_slug
+     FROM sorteos s JOIN loterias l ON l.id = s.loteria_id WHERE s.id = ?`
+  ).get(resultado.sorteo_id);
+
+  let animalitoReal = null;
+  let errorElSevero = null;
+  try {
+    const todos = await descargarResultadosElSevero(resultado.fecha);
+    const horaBuscada = normalizarHora12(sorteo.hora);
+    const match = todos.find((x) => normalizarSlug(x.loteria || '') === sorteo.loteria_slug && x.hora === horaBuscada);
+    animalitoReal = match ? { numero: String(match.numero), nombre: String(match.nombre).toUpperCase() } : null;
+  } catch (err) {
+    errorElSevero = err.message;
+  }
+
+  let animalitoIdCorrecto = null;
+  if (animalitoReal) {
+    const fila = db.prepare(`SELECT id FROM animalitos WHERE loteria_id = ? AND numero = ?`).get(sorteo.loteria_id, animalitoReal.numero);
+    animalitoIdCorrecto = fila ? fila.id : null;
+  }
+
+  const jugadas = db.prepare(`
+    SELECT j.id AS jugada_id, j.monto, j.cliente_nombre, j.cliente_telefono,
+           t.id AS ticket_id, t.codigo AS ticket_codigo, t.estado AS estado_actual,
+           v.codigo AS venta_codigo, u.nombre AS vendedor_nombre
+    FROM jugadas j
+    JOIN tickets t ON t.jugada_id = j.id
+    JOIN ventas v ON v.id = j.venta_id
+    JOIN usuarios u ON u.id = j.usuario_id
+    WHERE j.sorteo_id = ? AND j.fecha_sorteo = ?
+    ORDER BY t.codigo
+  `).all(resultado.sorteo_id, resultado.fecha);
+
+  const getAnimalitosDeJugada = db.prepare(`
+    SELECT a.id AS animalito_id, a.numero, a.nombre
+    FROM jugada_animalitos ja JOIN animalitos a ON a.id = ja.animalito_id
+    WHERE ja.jugada_id = ? ORDER BY ja.posicion
+  `);
+  const getPago = db.prepare(`SELECT * FROM pagos_premio WHERE ticket_id = ?`);
+
+  const tickets = jugadas.map((j) => {
+    const animalitosApostados = getAnimalitosDeJugada.all(j.jugada_id);
+    const estadoPropuesto = j.estado_actual === 'anulado'
+      ? 'anulado'
+      : (animalitoIdCorrecto && animalitosApostados.every((a) => a.animalito_id === animalitoIdCorrecto) ? 'ganador' : 'perdedor');
+    const pago = getPago.get(j.ticket_id);
+    return {
+      ticket_codigo: j.ticket_codigo,
+      venta_codigo: j.venta_codigo,
+      cliente_nombre: j.cliente_nombre,
+      cliente_telefono: j.cliente_telefono,
+      vendedor_nombre: j.vendedor_nombre,
+      monto: j.monto,
+      animalitos_apostados: animalitosApostados.map((a) => ({ numero: a.numero, nombre: a.nombre })),
+      estado_actual: j.estado_actual,
+      estado_propuesto: estadoPropuesto,
+      cambia: estadoPropuesto !== j.estado_actual,
+      ya_pagado: !!pago,
+      pago: pago || null,
+    };
+  });
+
+  res.json({
+    resultado_id: resultado.id,
+    fecha: resultado.fecha,
+    loteria_nombre: sorteo.loteria_nombre,
+    sorteo_hora: sorteo.hora,
+    animalito_real: animalitoReal,
+    error_elsevero: errorElSevero,
+    tickets,
+  });
+});
+
+// ------------------------------------------------------------
 // CORRECCION GUIADA DE RESULTADOS SOSPECHOSOS -- Paso B: aplicar
 // (solo admin). Recibe la lista EXACTA de correcciones que el admin
 // revisó en el preview (resultado_id + animalito_id_correcto, tal

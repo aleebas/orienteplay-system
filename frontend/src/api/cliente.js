@@ -185,4 +185,7 @@ export const getCorreccionResultadosPreview = () =>
 export const aplicarCorreccionResultados = (correcciones, confirmacion) =>
   req('POST', '/reportes/admin/correccion-resultados-aplicar', { correcciones, confirmacion });
 
+export const getTicketsDeResultado = (resultadoId) =>
+  req('GET', `/reportes/admin/correccion-resultados-preview/${resultadoId}/tickets`);
+
 export const API = { get: (path) => req('GET', path) };
