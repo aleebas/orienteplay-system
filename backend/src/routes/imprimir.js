@@ -19,24 +19,56 @@ const METODO_PAGO_LABEL = {
   biopago: 'BIOPAGO',
 };
 
+const TIMEOUT_APERTURA_MS = 5000;
+
+// Lock a nivel de proceso: solo hay UN puerto USB fisico, asi que dos
+// impresiones no pueden estar en curso a la vez -- sin esto, dos ventas
+// impresas casi al mismo tiempo compiten por el mismo device.open() y
+// pueden dejar la impresora en un estado inconsistente.
+let impresoraOcupada = false;
+
 router.post('/', (req, res) => {
   const { venta, jugadas, agenciaNombre } = req.body;
   if (!venta || !Array.isArray(jugadas)) {
     return res.status(400).json({ error: 'venta y jugadas son requeridos' });
   }
 
+  if (impresoraOcupada) {
+    return res.status(409).json({ error: 'La impresora está ocupada con otro ticket, intenta de nuevo en un momento' });
+  }
+  impresoraOcupada = true;
+
+  let respondido = false;
+  function responder(status, body) {
+    if (respondido) return;
+    respondido = true;
+    impresoraOcupada = false;
+    res.status(status).json(body);
+  }
+
   let device;
   try {
     device = new escpos.USB();
   } catch (err) {
-    return res.status(503).json({ error: 'Impresora térmica DP58U-02 no detectada en este equipo' });
+    return responder(503, { error: 'Impresora térmica DP58U-02 no detectada en este equipo' });
   }
 
   const printer = new escpos.Printer(device, { encoding: 'CP437' });
 
+  // Si device.open() nunca llama al callback (impresora apagada/trabada),
+  // no se debe dejar la peticion colgada para siempre -- ni el lock
+  // tomado para siempre, lo que rompiria todos los tickets siguientes.
+  const timeoutApertura = setTimeout(() => {
+    responder(503, { error: 'La impresora térmica no respondió a tiempo (¿está encendida y con papel?)' });
+    try { device.close(); } catch { /* puede que ni siquiera haya llegado a abrir */ }
+  }, TIMEOUT_APERTURA_MS);
+
   device.open((err) => {
+    clearTimeout(timeoutApertura);
+    if (respondido) return; // ya se respondio por timeout justo antes de que este callback llegara
+
     if (err) {
-      return res.status(503).json({ error: 'No se pudo abrir la conexión con la impresora: ' + err.message });
+      return responder(503, { error: 'No se pudo abrir la conexión con la impresora: ' + err.message });
     }
 
     try {
@@ -68,10 +100,16 @@ router.post('/', (req, res) => {
         .text(SEP2)
         .cut()
         .close(() => {
-          res.json({ ok: true, mensaje: 'Ticket enviado a la impresora' });
+          responder(200, { ok: true, mensaje: 'Ticket enviado a la impresora' });
         });
     } catch (printErr) {
-      res.status(500).json({ error: 'Error al imprimir: ' + printErr.message });
+      // Punto critico del bug original: si algo revienta aca (ej. un campo
+      // inesperado de la venta), antes se respondia el error pero el
+      // dispositivo USB se quedaba abierto/reclamado -- rompiendo todos
+      // los tickets siguientes hasta reiniciar el backend. Ahora siempre
+      // se cierra, pase lo que pase.
+      responder(500, { error: 'Error al imprimir: ' + printErr.message });
+      try { device.close(); } catch { /* ya pudo haber quedado cerrado por el propio error */ }
     }
   });
 });
