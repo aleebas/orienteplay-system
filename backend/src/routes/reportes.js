@@ -1035,4 +1035,85 @@ router.post('/admin/correccion-resultados-aplicar', requireAdmin, (req, res) => 
   }
 });
 
+// ------------------------------------------------------------
+// CORRECCION GUIADA DE RESULTADOS SOSPECHOSOS -- Paso C: recalcular
+// tickets (solo admin). Recibe la lista EXACTA de resultado_id que se
+// corrigieron en el Paso B y recalcula el estado de sus tickets contra
+// el animalito_id (ya corregido) de cada resultado.
+//
+// Reglas de seguridad, no negociables:
+//  - Un ticket 'anulado' nunca se toca.
+//  - Un ticket 'pagado' NUNCA se cambia automaticamente -- si el nuevo
+//    calculo dice que ya no deberia ser ganador, se reporta en
+//    "bloqueados_por_pago" para que un humano decida (revertir un pago
+//    ya hecho es una decision de negocio/contable, no una UPDATE).
+//  - Todo o nada: si un resultado_id no existe, no se aplica ningun
+//    cambio de ningun otro.
+// ------------------------------------------------------------
+router.post('/admin/correccion-resultados-recalcular-tickets', requireAdmin, (req, res) => {
+  const { resultado_ids, confirmacion } = req.body;
+  if (confirmacion !== 'CONFIRMAR RECALCULO') {
+    return res.status(400).json({ error: 'Debes enviar confirmacion exacta "CONFIRMAR RECALCULO" para continuar' });
+  }
+  if (!Array.isArray(resultado_ids) || resultado_ids.length === 0) {
+    return res.status(400).json({ error: 'resultado_ids debe ser un arreglo no vacio' });
+  }
+
+  const getResultado = db.prepare(`SELECT * FROM resultados WHERE id = ?`);
+  const getJugadasTickets = db.prepare(`
+    SELECT j.id AS jugada_id, t.id AS ticket_id, t.codigo AS ticket_codigo, t.estado AS estado_actual
+    FROM jugadas j JOIN tickets t ON t.jugada_id = j.id
+    WHERE j.sorteo_id = ? AND j.fecha_sorteo = ?
+  `);
+  const getAnimalitosDeJugada = db.prepare(`SELECT animalito_id FROM jugada_animalitos WHERE jugada_id = ?`);
+  const updateTicket = db.prepare(`UPDATE tickets SET estado = ? WHERE id = ?`);
+
+  const recalcular = db.transaction(() => {
+    const resumen = [];
+    for (const resultadoId of resultado_ids) {
+      const resultado = getResultado.get(resultadoId);
+      if (!resultado) throw new Error(`Resultado ${resultadoId} no encontrado`);
+
+      const jugadas = getJugadasTickets.all(resultado.sorteo_id, resultado.fecha);
+      let cambiados = 0;
+      const bloqueadosPorPago = [];
+      for (const j of jugadas) {
+        if (j.estado_actual === 'anulado') continue;
+
+        const apostados = getAnimalitosDeJugada.all(j.jugada_id).map((a) => a.animalito_id);
+        const ganaria = apostados.every((id) => id === resultado.animalito_id);
+        const propuesto = ganaria ? 'ganador' : 'perdedor';
+
+        if (j.estado_actual === 'pagado') {
+          if (propuesto !== 'ganador') bloqueadosPorPago.push({ ticket_id: j.ticket_id, ticket_codigo: j.ticket_codigo, estado_propuesto: propuesto });
+          continue;
+        }
+        if (propuesto !== j.estado_actual) {
+          updateTicket.run(propuesto, j.ticket_id);
+          cambiados++;
+        }
+      }
+      resumen.push({
+        resultado_id: resultadoId, sorteo_id: resultado.sorteo_id, fecha: resultado.fecha,
+        tickets_evaluados: jugadas.length, tickets_cambiados: cambiados, bloqueados_por_pago: bloqueadosPorPago,
+      });
+    }
+    return resumen;
+  });
+
+  try {
+    const resumen = recalcular();
+    const totalCambiados = resumen.reduce((s, r) => s + r.tickets_cambiados, 0);
+    const totalBloqueados = resumen.reduce((s, r) => s + r.bloqueados_por_pago.length, 0);
+    res.json({
+      mensaje: `${totalCambiados} ticket(s) recalculado(s).` + (totalBloqueados ? ` ${totalBloqueados} ticket(s) ya pagado(s) NO se tocaron -- requieren revision manual.` : ''),
+      total_cambiados: totalCambiados,
+      total_bloqueados_por_pago: totalBloqueados,
+      resumen,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;
