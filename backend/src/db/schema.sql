@@ -106,11 +106,15 @@ CREATE TABLE IF NOT EXISTS resultados (
 
 -- ----------------------------------------------------------
 -- RESULTADOS_CANDIDATOS: hallazgos del scraper automatico
--- (backend/src/utils/resultadosAuto.js) a la espera de que un
--- admin los confirme con un clic. Nunca se paga ni se marcan
--- tickets ganadores desde aqui directamente -- confirmar copia
--- el dato hacia RESULTADOS pasando por el mismo endpoint que
--- usa la carga manual.
+-- (backend/src/utils/resultadosAuto.js). Cuando el scraper encuentra
+-- un resultado lo aplica de inmediato como oficial (estado queda en
+-- 'confirmado' aqui, ver resultadosCore.registrarResultadoOficial) --
+-- ya no espera un clic humano. Solo queda 'pendiente_confirmacion'
+-- en el caso legado de un candidato con animalito_id pero sin
+-- resolver, y 'agotado' cuando los 4 intentos fallaron y hace falta
+-- cargar el resultado a mano. Nunca se paga desde aqui directamente
+-- -- eso siempre pasa por RESULTADOS y despues por un pago explicito
+-- por ticket.
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS resultados_candidatos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

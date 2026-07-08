@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db/connection');
 const { requireAuth, requireAdminOrPermiso } = require('../middleware/auth');
 const { fechaVenezuelaHoy, ahoraVenezuela, fechaHoraVenezuela } = require('../utils/fechaVenezuela');
+const { registrarResultadoOficial } = require('../utils/resultadosCore');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -43,27 +44,15 @@ router.post('/', requireAdminOrPermiso('puede_confirmar_resultados'), (req, res)
     return res.status(409).json({ error: 'Ya existe un resultado cargado para este sorteo y fecha', resultado_id: existente.id });
   }
 
-  const r = db.prepare(
-    `INSERT INTO resultados (sorteo_id, animalito_id, fecha, confirmado_por, fuente) VALUES (?, ?, ?, ?, ?)`
-  ).run(sorteo_id, animalito_id, fechaResultado, req.user.id, fuente || 'manual');
+  const resultado = registrarResultadoOficial({
+    sorteoId: sorteo_id, animalitoId: animalito_id, fecha: fechaResultado,
+    fuente: fuente || 'manual', confirmadoPor: req.user.id,
+  });
+  if (resultado.yaExistia) {
+    return res.status(409).json({ error: 'Ya existe un resultado cargado para este sorteo y fecha', resultado_id: resultado.resultadoId });
+  }
 
-  // Marca como ganadores/perdedores todos los tickets de ese sorteo/fecha.
-  // Regla simple: para modo "directo" (1 animalito), gana si coincide.
-  // Para modos multi-animalito (tripleta, etc.) se requiere que TODOS
-  // los animalitos jugados esten entre los resultados marcados ganadores
-  // de esa fecha (pensado para cuando se carguen varios resultados del dia).
-  actualizarEstadoTickets(sorteo_id, fechaResultado);
-
-  // Si el scraper habia dejado un candidato pendiente/agotado para este
-  // mismo sorteo y fecha, resolverlo tambien -- de lo contrario queda
-  // huerfano y el panel de "resultados automaticos por revisar" lo sigue
-  // mostrando para siempre aunque el sorteo ya tenga resultado oficial.
-  db.prepare(
-    `UPDATE resultados_candidatos SET estado = 'confirmado', actualizado_en = datetime('now')
-     WHERE sorteo_id = ? AND fecha = ? AND estado IN ('pendiente_confirmacion', 'agotado')`
-  ).run(sorteo_id, fechaResultado);
-
-  res.status(201).json({ mensaje: 'Resultado registrado', resultado_id: r.lastInsertRowid });
+  res.status(201).json({ mensaje: 'Resultado registrado', resultado_id: resultado.resultadoId });
 });
 
 // ------------------------------------------------------------
@@ -113,20 +102,15 @@ router.post('/candidatos/:id/confirmar', requireAdminOrPermiso('puede_confirmar_
     });
   }
 
-  const existente = db.prepare(`SELECT id FROM resultados WHERE sorteo_id = ? AND fecha = ?`).get(candidato.sorteo_id, candidato.fecha);
-  if (existente) {
+  const resultado = registrarResultadoOficial({
+    sorteoId: candidato.sorteo_id, animalitoId: candidato.animalito_id, fecha: candidato.fecha,
+    fuente: 'auto_confirmado', confirmadoPor: req.user.id,
+  });
+  if (resultado.yaExistia) {
     return res.status(409).json({ error: 'Ya existe un resultado cargado para este sorteo y fecha' });
   }
 
-  const r = db.prepare(
-    `INSERT INTO resultados (sorteo_id, animalito_id, fecha, confirmado_por, fuente) VALUES (?, ?, ?, ?, ?)`
-  ).run(candidato.sorteo_id, candidato.animalito_id, candidato.fecha, req.user.id, 'auto_confirmado');
-
-  actualizarEstadoTickets(candidato.sorteo_id, candidato.fecha);
-
-  db.prepare(`UPDATE resultados_candidatos SET estado = 'confirmado', actualizado_en = datetime('now') WHERE id = ?`).run(candidato.id);
-
-  res.json({ mensaje: 'Resultado confirmado', resultado_id: r.lastInsertRowid });
+  res.json({ mensaje: 'Resultado confirmado', resultado_id: resultado.resultadoId });
 });
 
 // ------------------------------------------------------------
@@ -141,31 +125,6 @@ router.post('/candidatos/:id/descartar', requireAdminOrPermiso('puede_confirmar_
   db.prepare(`UPDATE resultados_candidatos SET estado = 'descartado', actualizado_en = datetime('now') WHERE id = ?`).run(candidato.id);
   res.json({ mensaje: 'Candidato descartado' });
 });
-
-function actualizarEstadoTickets(sorteoId, fecha) {
-  const jugadas = db.prepare(
-    `SELECT j.id AS jugada_id, m.cantidad_animalitos
-     FROM jugadas j JOIN modos_juego m ON m.id = j.modo_juego_id
-     WHERE j.sorteo_id = ? AND j.fecha_sorteo = ?`
-  ).all(sorteoId, fecha);
-
-  const resultadosAnimalitos = db.prepare(
-    `SELECT animalito_id FROM resultados WHERE sorteo_id = ? AND fecha = ?`
-  ).all(sorteoId, fecha).map(r => r.animalito_id);
-
-  const updateTicket = db.prepare(
-    `UPDATE tickets SET estado = ? WHERE jugada_id = ? AND estado = 'pendiente'`
-  );
-
-  for (const j of jugadas) {
-    const animalitosJugados = db.prepare(
-      `SELECT animalito_id FROM jugada_animalitos WHERE jugada_id = ?`
-    ).all(j.jugada_id).map(a => a.animalito_id);
-
-    const todosCoinciden = animalitosJugados.every(id => resultadosAnimalitos.includes(id));
-    updateTicket.run(todosCoinciden ? 'ganador' : 'perdedor', j.jugada_id);
-  }
-}
 
 // ------------------------------------------------------------
 // GET /resultados?fecha=YYYY-MM-DD

@@ -6,13 +6,15 @@
 // publico, mismo endpoint que consume su propia pagina de
 // resultados). Si no responde o no trae el sorteo buscado, cae a
 // lotoven.com (scraping de HTML) como respaldo. Si lo encuentra,
-// lo deja en resultados_candidatos con estado
-// 'pendiente_confirmacion' -- NUNCA marca tickets como
-// ganadores/perdedores por si solo, eso solo pasa cuando un admin
-// confirma (ver POST /api/resultados que ya exige una accion
-// explicita para eso). Si tras 4 intentos (12 minutos) no
-// encuentra nada en ninguna fuente, marca 'agotado' para que quede
-// claro que hace falta cargar el resultado a mano.
+// lo aplica de inmediato como resultado OFICIAL (via
+// registrarResultadoOficial(), el mismo camino que usa la carga
+// manual y la confirmacion de un admin) -- sin esperar a que un
+// humano confirme. Esto marca ganadores/perdedores automaticamente;
+// NO paga nada por si solo, pagar un ticket ganador sigue siendo
+// una accion aparte que un cajero hace ticket por ticket. Si tras 4
+// intentos (12 minutos) no encuentra nada en ninguna fuente, marca
+// 'agotado' para que quede claro que hace falta cargar el resultado
+// a mano.
 //
 // lotoven.com/animalitos/ renderiza TODAS las loterias del dia en
 // una sola pagina de HTML estatico (sin API/XHR). Cada loteria es
@@ -27,6 +29,7 @@
 const https = require('https');
 const db = require('./../db/connection');
 const { fechaVenezuelaHoy, ahoraVenezuela, fechaHoraVenezuela } = require('./fechaVenezuela');
+const { registrarResultadoOficial } = require('./resultadosCore');
 
 const RETRASO_INICIAL_MIN = 3;
 const INTERVALO_REINTENTO_MIN = 3;
@@ -276,8 +279,20 @@ async function ejecutarChequeo(sorteo, fecha, intento) {
           `SELECT id FROM animalitos WHERE loteria_id = (SELECT loteria_id FROM sorteos WHERE id = ?) AND nombre = ?`
         ).get(sorteo.id, encontrado.nombre);
     if (animalito) {
-      guardarCandidato(sorteo.id, fecha, animalito.id, 'pendiente_confirmacion', intento);
-      console.log(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora}: candidato encontrado via ${fuente} (${encontrado.nombre}), esperando confirmacion`);
+      // Confirmacion 100% automatica: se aplica de inmediato como
+      // resultado oficial (marca ganadores/perdedores), sin esperar a
+      // que un admin haga clic. Si en el instante entre el fetch y aqui
+      // un admin ya cargo el resultado a mano (carrera muy poco probable
+      // pero posible), registrarResultadoOficial() no lo sobreescribe.
+      const resultado = registrarResultadoOficial({
+        sorteoId: sorteo.id, animalitoId: animalito.id, fecha, fuente: 'auto', confirmadoPor: null,
+      });
+      if (resultado.yaExistia) {
+        console.log(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora}: ya habia un resultado oficial cargado justo antes de aplicar el automatico -- no se sobreescribe`);
+        return;
+      }
+      guardarCandidato(sorteo.id, fecha, animalito.id, 'confirmado', intento);
+      console.log(`[resultadosAuto] ${sorteo.loteria_nombre} ${sorteo.hora}: resultado aplicado automaticamente via ${fuente} (${encontrado.nombre}), tickets recalculados sin intervencion humana`);
       return;
     }
   }
