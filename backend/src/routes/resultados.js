@@ -7,15 +7,18 @@ const router = express.Router();
 router.use(requireAuth);
 
 // ------------------------------------------------------------
-// POST /resultados
+// POST /resultados  (solo admin)
 // Registra el resultado de un sorteo (animalito ganador) y
 // recalcula automaticamente que tickets ganaron.
 // El "fuente" indica si vino de auto-busqueda o se cargo manual,
 // pero SIEMPRE requiere haber pasado por este endpoint -> es
 // decir, siempre hay una accion explicita de carga, nunca se
 // paga nada sin que alguien haya confirmado el resultado aqui.
+// Mismo permiso que /candidatos/:id/confirmar: cargar un resultado
+// oficial equivale a confirmarlo, sin importar si es carga manual
+// o confirmacion de un candidato del scraper.
 // ------------------------------------------------------------
-router.post('/', (req, res) => {
+router.post('/', requireAdminOrPermiso('puede_confirmar_resultados'), (req, res) => {
   const { sorteo_id, animalito_id, fecha, fuente } = req.body;
   if (!sorteo_id || !animalito_id) {
     return res.status(400).json({ error: 'sorteo_id y animalito_id son requeridos' });

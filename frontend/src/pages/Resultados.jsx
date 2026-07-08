@@ -264,7 +264,7 @@ export default function Resultados() {
                         <span className="badge badge-muted" style={{ marginLeft: 8 }}>Sin resultado</span>
                       )}
                     </div>
-                    {!res && (
+                    {!res && puedeConfirmar && (
                       <button
                         className="btn btn-primary btn-sm btn-inline"
                         onClick={() => { setSorteoSelec({ ...s, loteria: lot }); setAnimalito(null); setNumeroInput(''); setErrorNumero(''); }}

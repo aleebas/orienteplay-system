@@ -29,6 +29,14 @@ router.post('/:codigoTicket', (req, res) => {
   }
 
   const jugada = db.prepare(`SELECT * FROM jugadas WHERE id = ?`).get(ticket.jugada_id);
+
+  // El ticket solo se puede pagar desde la agencia donde se vendio -- sin
+  // esto, un usuario de la agencia A podria pagar (y cobrar comision de)
+  // un ticket ganador vendido por la agencia B.
+  if (jugada.agencia_id !== req.user.agencia_id) {
+    return res.status(403).json({ error: 'Este ticket pertenece a otra agencia' });
+  }
+
   const modo = db.prepare(`SELECT * FROM modos_juego WHERE id = ?`).get(jugada.modo_juego_id);
   const montoPremio = jugada.monto * modo.multiplicador;
 
