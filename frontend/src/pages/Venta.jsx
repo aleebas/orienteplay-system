@@ -106,6 +106,7 @@ export default function Venta() {
   const [ventaConfirmada, setVentaConfirmada] = useState(null);
   const [imprimiendo, setImprimiendo] = useState(false);
   const [errorImprimir, setErrorImprimir] = useState('');
+  const [avisoImprimir, setAvisoImprimir] = useState(null); // { tipo: 'ok' | 'confirmar', texto }
 
   // Modal "Buscar tickets" -- pagar o repetir un ticket sin salir de la
   // venta en curso.
@@ -202,13 +203,23 @@ export default function Venta() {
   async function handleImprimir() {
     setImprimiendo(true);
     setErrorImprimir('');
+    setAvisoImprimir(null);
     try {
       await imprimirTicket(ventaConfirmada, auth?.user?.agencia_nombre);
+      setAvisoImprimir({ tipo: 'ok', texto: '✓ Ticket enviado a la impresora térmica.' });
     } catch (err) {
       if (err.status === 503) {
         // Sin impresora térmica USB en este servidor (entorno cloud) --
         // usar el diálogo de impresión del navegador sobre el comprobante
-        // ya renderizado (ver @media print en index.css).
+        // ya renderizado (ver @media print / @page en index.css). No hay
+        // forma de saber desde el navegador si el ticket salió de verdad
+        // (depende de que esa PC tenga la impresora térmica bien
+        // configurada), así que se le pregunta al cajero al cerrar el
+        // diálogo de impresión.
+        window.addEventListener('afterprint', function alAvisar() {
+          window.removeEventListener('afterprint', alAvisar);
+          setAvisoImprimir({ tipo: 'confirmar', texto: '¿Salió el ticket de la impresora?' });
+        });
         window.print();
       } else {
         setErrorImprimir(err.message || 'No se pudo imprimir el ticket');
@@ -689,6 +700,16 @@ export default function Venta() {
             + Nueva venta
           </button>
           {errorImprimir && <div className="alert alert-danger">{errorImprimir}</div>}
+          {avisoImprimir?.tipo === 'ok' && <div className="alert alert-success">{avisoImprimir.texto}</div>}
+          {avisoImprimir?.tipo === 'confirmar' && (
+            <div className="alert alert-warning">
+              <p className="mb-12">{avisoImprimir.texto}</p>
+              <div className="flex gap-8">
+                <button className="btn btn-success btn-sm btn-inline" onClick={() => setAvisoImprimir(null)}>Sí, salió bien</button>
+                <button className="btn btn-outline btn-sm btn-inline" onClick={handleImprimir} disabled={imprimiendo}>Reintentar</button>
+              </div>
+            </div>
+          )}
           <button className="btn btn-outline" onClick={handleImprimir} disabled={imprimiendo}>
             {imprimiendo ? '⟳ Imprimiendo...' : '🖨 Imprimir comprobante'}
           </button>

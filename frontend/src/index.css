@@ -923,7 +923,16 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   padding: 16px 0;
 }
 
-/* ── Print ── */
+/* ── Print ──
+   Ancho real del rollo térmico (impresora DP58U-02 = 58mm) -- sin este
+   @page, el navegador imprime el comprobante en el tamaño de página por
+   defecto (Carta/A4), que casi ningún driver de impresora térmica maneja
+   bien: el ticket sale cortado, mal escalado o el diálogo de impresión
+   ni siquiera ofrece esa impresora como opción de papel compatible. */
+@page {
+  size: 58mm auto;
+  margin: 0;
+}
 @media print {
   .navbar,
   .venta-comprobante-acciones,
@@ -933,8 +942,11 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   .page { padding: 0 !important; }
   .comprobante {
     box-shadow: none !important;
-    border: 1px solid #ccc !important;
-    max-width: 100% !important;
+    border: none !important;
+    max-width: 54mm !important;
+    padding: 2mm !important;
+    margin: 0 !important;
+    font-size: 10px !important;
   }
 }
 
