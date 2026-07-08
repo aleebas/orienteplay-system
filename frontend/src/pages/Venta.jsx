@@ -5,16 +5,20 @@ import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimir
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
-import { hora12, fmt, horaVenezuela, fechaHoyVenezuela } from '../utils/formato';
+import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, ahoraVenezuela } from '../utils/formato';
 import { hayWebUSBDisponible, obtenerImpresoraEmparejada, emparejarImpresora, imprimirViaWebUSB } from '../utils/webUsbPrinter';
 
 const TODAY = () => fechaHoyVenezuela();
 
 function sorteoAbierto(sorteo) {
-  const ahora = new Date();
+  // ahoraVenezuela() representa la hora de Venezuela en los campos UTC, así
+  // que hay que fijar la hora del sorteo con setUTCHours (no setHours) para
+  // que ambos lados de la comparación estén en el mismo convenio -- ver
+  // utils/formato.js.
+  const ahora = ahoraVenezuela();
   const [h, m] = sorteo.hora.split(':').map(Number);
   const horaSorteo = new Date(ahora);
-  horaSorteo.setHours(h, m, 0, 0);
+  horaSorteo.setUTCHours(h, m, 0, 0);
   const cierre = new Date(horaSorteo.getTime() - (sorteo.minutos_cierre_previo ?? 5) * 60000);
   return ahora < cierre;
 }
@@ -43,8 +47,23 @@ function cupoBarClase(pct) {
   return 'cupo-bar-verde';
 }
 
+// Restaura carrito/cliente/método de pago de un refresh accidental a mitad
+// de una venta -- antes se perdía por completo (ver auditoría). Solo estos
+// 4 campos: son "trabajo ya confirmado por el cajero" (líneas agregadas al
+// carrito, no la selección de animalito a medio armar, que es rápida de
+// rehacer y más riesgosa de restaurar si el catálogo cambió).
+function cargarVentaEnCurso() {
+  try {
+    const raw = sessionStorage.getItem('venta-en-curso');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export default function Venta() {
-  const { auth, caja } = useAuth();
+  const { auth, caja, cajaCargando } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const comprobanteRef = useRef(null);
@@ -94,10 +113,20 @@ export default function Venta() {
   const [alertas, setAlertas] = useState([]);
   const [error, setError] = useState('');
 
-  const [carrito, setCarrito] = useState([]);
-  const [clienteNombre, setClienteNombre] = useState('');
-  const [clienteTelefono, setClienteTelefono] = useState('');
-  const [metodoPago, setMetodoPago] = useState('efectivo');
+  const [carrito, setCarrito] = useState(() => cargarVentaEnCurso()?.carrito || []);
+  const [clienteNombre, setClienteNombre] = useState(() => cargarVentaEnCurso()?.clienteNombre || '');
+  const [clienteTelefono, setClienteTelefono] = useState(() => cargarVentaEnCurso()?.clienteTelefono || '');
+  const [metodoPago, setMetodoPago] = useState(() => cargarVentaEnCurso()?.metodoPago || 'efectivo');
+
+  // Persiste el carrito en curso en cada cambio -- así un refresh accidental
+  // (o el navegador cerrándose por error) no borra jugadas ya armadas.
+  useEffect(() => {
+    if (carrito.length === 0 && !clienteNombre && !clienteTelefono) {
+      sessionStorage.removeItem('venta-en-curso');
+    } else {
+      sessionStorage.setItem('venta-en-curso', JSON.stringify({ carrito, clienteNombre, clienteTelefono, metodoPago }));
+    }
+  }, [carrito, clienteNombre, clienteTelefono, metodoPago]);
 
   const [tasaBCV, setTasaBCV] = useState(null);
   const [montoUSD, setMontoUSD] = useState('');
@@ -122,12 +151,17 @@ export default function Venta() {
 
   // ── Carga catálogo ────────────────────────────────────────
   useEffect(() => {
+    // Mientras se confirma si hay una caja abierta (ej. justo después de un
+    // refresh) no se decide nada todavía -- antes esto expulsaba a /caja de
+    // inmediato viendo el caja=null momentáneo, borrando la venta en curso
+    // aunque la caja siguiera abierta en el servidor.
+    if (cajaCargando) return;
     if (!caja) { navigate('/caja'); return; }
     getCatalogoLoterias()
       .then(setCatalogo)
       .catch(() => setError('No se pudo cargar el catálogo'))
       .finally(() => setLoadingCatalogo(false));
-  }, [caja, navigate]);
+  }, [caja, cajaCargando, navigate]);
 
   // ── Tasa BCV para el conversor USD → Bs ───────────────────
   useEffect(() => {

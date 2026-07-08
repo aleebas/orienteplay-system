@@ -11,6 +11,24 @@ export function fechaHoyVenezuela() {
   return `${g('year')}-${g('month')}-${g('day')}`;
 }
 
+// Date cuyos campos UTC (getUTCHours, setUTCHours, etc.) representan la
+// hora LOCAL de Venezuela -- mismo convenio que
+// backend/src/utils/fechaVenezuela.js. Usar esto (con los métodos UTC en
+// vez de los locales) para cualquier cálculo de "¿ya pasó la hora de
+// cierre de este sorteo?": si se usa new Date()/setHours() a secas, el
+// resultado depende del reloj/zona horaria del dispositivo del cajero, no
+// de la hora real en Venezuela -- un celular mal configurado podía mostrar
+// un sorteo como abierto cuando el backend ya lo iba a rechazar.
+export function ahoraVenezuela() {
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Caracas',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date());
+  const g = (t) => Number(p.find(x => x.type === t)?.value);
+  return new Date(Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'), g('second')));
+}
+
 // Mensaje de WhatsApp para notificar al responsable de pagos digitales
 // cuando un premio se paga por Pago Móvil o Biopago. `jugada` y `ticket`
 // son el shape que devuelve GET /jugadas/ticket/:codigo.

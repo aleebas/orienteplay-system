@@ -6,6 +6,14 @@ export function setToken(t) { _token = t; }
 export function getToken() { return _token; }
 export function clearToken() { _token = null; }
 
+// AuthContext se registra acá (ver su useEffect) para poder cerrar la
+// sesión de forma centralizada cuando el token vence a mitad de turno --
+// antes cada pantalla se quedaba mostrando el error crudo del backend
+// ("Token invalido o expirado") en su lugar, sin ninguna forma clara de
+// volver a login.
+let _onSesionExpirada = null;
+export function setOnSesionExpirada(fn) { _onSesionExpirada = fn; }
+
 async function req(method, path, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (_token) headers['Authorization'] = `Bearer ${_token}`;
@@ -18,6 +26,9 @@ async function req(method, path, body) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // Un 401 en /auth/login es solo "usuario o clave incorrecta" -- no una
+    // sesión que venció, así que no dispara el cierre de sesión global.
+    if (res.status === 401 && path !== '/auth/login') _onSesionExpirada?.();
     const err = new Error(data.error || `Error ${res.status}`);
     err.status = res.status;
     err.data = data;

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { getCajaActual } from '../api/cliente';
 
 export default function Login() {
-  const { login, setCaja } = useAuth();
+  const { login, setCaja, sesionExpirada, limpiarSesionExpirada } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ usuario: '', password: '' });
   const [error, setError] = useState('');
@@ -13,6 +13,7 @@ export default function Login() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    limpiarSesionExpirada();
     setLoading(true);
     try {
       await login(form.usuario, form.password);
@@ -39,6 +40,9 @@ export default function Login() {
 
       <div className="login-card">
         <form onSubmit={handleSubmit}>
+          {sesionExpirada && !error && (
+            <div className="alert alert-warning">Tu sesión venció, inicia sesión de nuevo.</div>
+          )}
           {error && <div className="alert alert-danger">{error}</div>}
 
           <div className="field">
