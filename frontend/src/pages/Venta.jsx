@@ -6,6 +6,7 @@ import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
 import { hora12, fmt, horaVenezuela, fechaHoyVenezuela } from '../utils/formato';
+import { hayWebUSBDisponible, obtenerImpresoraEmparejada, emparejarImpresora, imprimirViaWebUSB } from '../utils/webUsbPrinter';
 
 const TODAY = () => fechaHoyVenezuela();
 
@@ -107,6 +108,8 @@ export default function Venta() {
   const [imprimiendo, setImprimiendo] = useState(false);
   const [errorImprimir, setErrorImprimir] = useState('');
   const [avisoImprimir, setAvisoImprimir] = useState(null); // { tipo: 'ok' | 'confirmar', texto }
+  const [impresoraUSBEmparejada, setImpresoraUSBEmparejada] = useState(false);
+  const [emparejandoImpresora, setEmparejandoImpresora] = useState(false);
 
   // Modal "Buscar tickets" -- pagar o repetir un ticket sin salir de la
   // venta en curso.
@@ -195,27 +198,64 @@ export default function Venta() {
     navigate(location.pathname, { replace: true, state: null });
   }, [catalogo, location.pathname, location.state, navigate]);
 
-  // ── Focus "Nueva venta" al mostrar comprobante ────────────
+  // ── Focus "Nueva venta" al mostrar comprobante + revisar si ya hay una
+  // impresora térmica USB emparejada en esta computadora (no requiere
+  // gesto del usuario, WebUSB lo permite para dispositivos ya autorizados).
   useEffect(() => {
-    if (ventaConfirmada) nuevaVentaRef.current?.focus();
+    if (!ventaConfirmada) return;
+    nuevaVentaRef.current?.focus();
+    obtenerImpresoraEmparejada().then((d) => setImpresoraUSBEmparejada(!!d));
   }, [ventaConfirmada]);
+
+  async function handleEmparejarImpresora() {
+    setEmparejandoImpresora(true);
+    setErrorImprimir('');
+    try {
+      await emparejarImpresora();
+      setImpresoraUSBEmparejada(true);
+      setAvisoImprimir({ tipo: 'ok', texto: '✓ Impresora emparejada. Ya puedes imprimir directo desde esta computadora.' });
+    } catch (err) {
+      // El cajero cerró el selector de dispositivos sin elegir uno -- no es
+      // un error real, no hay nada que mostrar.
+      if (err.name !== 'NotFoundError') setErrorImprimir(err.message || 'No se pudo emparejar la impresora');
+    } finally {
+      setEmparejandoImpresora(false);
+    }
+  }
 
   async function handleImprimir() {
     setImprimiendo(true);
     setErrorImprimir('');
     setAvisoImprimir(null);
+
+    // 1) Impresora térmica USB emparejada en ESTA computadora -- imprime
+    // directo desde el navegador, sin pasar por el backend (que en Railway
+    // no tiene puerto USB y nunca puede imprimir de verdad). Es el camino
+    // principal ahora; los dos siguientes son respaldo.
+    if (impresoraUSBEmparejada) {
+      try {
+        await imprimirViaWebUSB(ventaConfirmada, auth?.user?.agencia_nombre);
+        setAvisoImprimir({ tipo: 'ok', texto: '✓ Ticket enviado a la impresora térmica.' });
+        setImprimiendo(false);
+        return;
+      } catch (err) {
+        setErrorImprimir(`No se pudo imprimir por USB (${err.message}). Probando otras opciones...`);
+      }
+    }
+
+    // 2) Impresora térmica USB conectada al servidor backend (solo funciona
+    // si backend e impresora están en la misma PC -- no es el caso en
+    // Railway, pero se deja por si algún día hay una instalación local).
     try {
       await imprimirTicket(ventaConfirmada, auth?.user?.agencia_nombre);
       setAvisoImprimir({ tipo: 'ok', texto: '✓ Ticket enviado a la impresora térmica.' });
     } catch (err) {
       if (err.status === 503) {
-        // Sin impresora térmica USB en este servidor (entorno cloud) --
-        // usar el diálogo de impresión del navegador sobre el comprobante
-        // ya renderizado (ver @media print / @page en index.css). No hay
-        // forma de saber desde el navegador si el ticket salió de verdad
-        // (depende de que esa PC tenga la impresora térmica bien
-        // configurada), así que se le pregunta al cajero al cerrar el
-        // diálogo de impresión.
+        // 3) Último respaldo: diálogo de impresión del navegador sobre el
+        // comprobante ya renderizado (ver @media print / @page en
+        // index.css). No hay forma de saber desde el navegador si el
+        // ticket salió de verdad, así que se le pregunta al cajero al
+        // cerrar el diálogo de impresión.
         window.addEventListener('afterprint', function alAvisar() {
           window.removeEventListener('afterprint', alAvisar);
           setAvisoImprimir({ tipo: 'confirmar', texto: '¿Salió el ticket de la impresora?' });
@@ -713,6 +753,14 @@ export default function Venta() {
           <button className="btn btn-outline" onClick={handleImprimir} disabled={imprimiendo}>
             {imprimiendo ? '⟳ Imprimiendo...' : '🖨 Imprimir comprobante'}
           </button>
+          {hayWebUSBDisponible() && !impresoraUSBEmparejada && (
+            <button className="btn btn-outline btn-sm" onClick={handleEmparejarImpresora} disabled={emparejandoImpresora}>
+              {emparejandoImpresora ? '⟳ Emparejando...' : '🔌 Emparejar impresora térmica (una vez por PC)'}
+            </button>
+          )}
+          {impresoraUSBEmparejada && (
+            <div className="text-muted text-sm text-center">🔌 Impresora térmica USB lista en esta computadora</div>
+          )}
           <BotonWhatsApp
             comprobanteRef={comprobanteRef}
             ventaData={ventaConfirmada}
