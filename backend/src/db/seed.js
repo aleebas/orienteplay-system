@@ -176,9 +176,24 @@ function seed() {
       ).run(loteriaId, m.nombre, m.slug, m.multiplicador, m.cantidad);
     }
 
-    // Comisión
-    db.prepare(`INSERT OR IGNORE INTO comisiones (loteria_id, agencia_id, porcentaje) VALUES (?, NULL, ?)`)
-      .run(loteriaId, lot.comision);
+    // Comisión. OJO: "INSERT OR IGNORE" NO sirve aqui -- SQLite trata cada
+    // NULL como distinto de cualquier otro NULL para efectos de UNIQUE, asi
+    // que UNIQUE(loteria_id, agencia_id) nunca detecta conflicto cuando
+    // agencia_id es NULL (comision "default"). Como seed() corre en CADA
+    // arranque del servidor (ver server.js), eso insertaba una fila nueva
+    // cada vez que Railway reiniciaba el proceso -- con muchos redeploys
+    // en un dia, se acumulaban muchas filas default para la misma loteria,
+    // y el LEFT JOIN de reportes.js/caja.js (que hace match por "OR
+    // agencia_id IS NULL") las contaba TODAS, multiplicando la comision
+    // calculada. Se verifica explicitamente con SELECT en vez de confiar
+    // en el UNIQUE.
+    const comisionExistente = db.prepare(
+      `SELECT id FROM comisiones WHERE loteria_id = ? AND agencia_id IS NULL`
+    ).get(loteriaId);
+    if (!comisionExistente) {
+      db.prepare(`INSERT INTO comisiones (loteria_id, agencia_id, porcentaje) VALUES (?, NULL, ?)`)
+        .run(loteriaId, lot.comision);
+    }
 
     console.log(
       `✓ ${lot.nombre}: ${lot.animalitos.length} animalitos, ${lot.sorteos.length} sorteos, ` +

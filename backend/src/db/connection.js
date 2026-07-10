@@ -104,4 +104,20 @@ db.exec(`
     )
 `);
 
+// Limpieza de filas duplicadas en COMISIONES: por el bug de seed.js
+// descrito arriba (INSERT OR IGNORE no detecta conflicto en agencia_id
+// NULL), cada reinicio del servidor pudo haber agregado una fila
+// "default" (agencia_id IS NULL) de mas para la misma loteria, e inflado
+// la comision calculada en Rendicion/Caja (el LEFT JOIN contaba cada fila
+// duplicada como una venta de comision aparte). Se deja solo la fila mas
+// antigua (MIN(id)) por loteria. Idempotente -- no hace nada si ya esta
+// limpio.
+db.exec(`
+  DELETE FROM comisiones
+  WHERE agencia_id IS NULL
+    AND id NOT IN (
+      SELECT MIN(id) FROM comisiones WHERE agencia_id IS NULL GROUP BY loteria_id
+    )
+`);
+
 module.exports = db;

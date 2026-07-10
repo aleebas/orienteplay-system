@@ -200,13 +200,21 @@ function calcularResumenCaja(cajaId) {
     `SELECT COALESCE(SUM(monto), 0) AS total FROM jugadas WHERE caja_cobro_id = ? AND metodo_cobro IN ('pago_movil', 'biopago')`
   ).get(cajaId).total;
 
-  // Comision estimada: suma de (venta * % comision de su loteria)
+  // Comision estimada: suma de (venta * % comision de su loteria).
+  // Subqueries en vez de LEFT JOIN + OR: el OR podia matchear tanto la fila
+  // de comision especifica de la agencia como la fila "default" (agencia_id
+  // NULL) para la misma loteria, contando cada jugada dos (o mas) veces si
+  // existian filas duplicadas -- ver fix en seed.js/connection.js.
   const comisionRows = db.prepare(
-    `SELECT j.monto, COALESCE(c.porcentaje, 15) AS porcentaje
+    `SELECT j.monto,
+       COALESCE(
+         (SELECT porcentaje FROM comisiones WHERE loteria_id = l.id AND agencia_id = j.agencia_id),
+         (SELECT porcentaje FROM comisiones WHERE loteria_id = l.id AND agencia_id IS NULL LIMIT 1),
+         15
+       ) AS porcentaje
      FROM jugadas j
      JOIN sorteos s ON s.id = j.sorteo_id
      JOIN loterias l ON l.id = s.loteria_id
-     LEFT JOIN comisiones c ON c.loteria_id = l.id AND (c.agencia_id = j.agencia_id OR c.agencia_id IS NULL)
      WHERE j.caja_id = ?`
   ).all(cajaId);
 

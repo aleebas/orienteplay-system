@@ -243,12 +243,22 @@ router.get('/rendicion', (req, res) => {
     GROUP BY j.fecha_sorteo
   `).all(agenciaId, desde, hasta);
 
+  // Subqueries en vez de LEFT JOIN + OR: con el JOIN, si existiera tanto
+  // una fila de comision especifica de la agencia como la fila "default"
+  // (agencia_id NULL) para la misma loteria, el OR hacia matchear ambas y
+  // la jugada se contaba DOS veces (o mas, si habia filas duplicadas --
+  // ver fix en seed.js/connection.js). Con subqueries se toma como maximo
+  // una fila: la especifica de la agencia si existe, si no la default.
   const comisionRows = db.prepare(`
-    SELECT j.fecha_sorteo AS fecha, j.monto, COALESCE(c.porcentaje, 15) AS porcentaje
+    SELECT j.fecha_sorteo AS fecha, j.monto,
+      COALESCE(
+        (SELECT porcentaje FROM comisiones WHERE loteria_id = l.id AND agencia_id = j.agencia_id),
+        (SELECT porcentaje FROM comisiones WHERE loteria_id = l.id AND agencia_id IS NULL LIMIT 1),
+        15
+      ) AS porcentaje
     FROM jugadas j
     JOIN sorteos s ON s.id = j.sorteo_id
     JOIN loterias l ON l.id = s.loteria_id
-    LEFT JOIN comisiones c ON c.loteria_id = l.id AND (c.agencia_id = j.agencia_id OR c.agencia_id IS NULL)
     WHERE j.agencia_id = ? AND j.fecha_sorteo BETWEEN ? AND ?
   `).all(agenciaId, desde, hasta);
 
