@@ -13,6 +13,7 @@ import {
   descartarCandidato,
 } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
+import { normalizarTimestampSqlite } from '../utils/formato';
 import { fmt, horaVenezuela, hora12, fechaHoyVenezuela } from '../utils/formato';
 
 const TODAY = () => fechaHoyVenezuela();
@@ -374,7 +375,7 @@ export default function Dashboard() {
                     </td>
                     <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
                       {r.creada_en
-                        ? new Date(r.creada_en).toLocaleTimeString('es-VE', {
+                        ? new Date(normalizarTimestampSqlite(r.creada_en)).toLocaleTimeString('es-VE', {
                             timeZone: 'America/Caracas',
                             hour: '2-digit', minute: '2-digit', hour12: true,
                           })

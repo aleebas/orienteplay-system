@@ -76,9 +76,21 @@ export function fmtTicket(n) {
   return `${intFmt},${dec}`;
 }
 
+// Normaliza un timestamp de sqlite ('YYYY-MM-DD HH:MM:SS', siempre UTC y sin
+// sufijo de zona) a ISO con 'Z' antes de construir un Date. Sin esto,
+// new Date(str) interpreta el string como hora LOCAL del proceso/dispositivo
+// (no UTC) -- y como el valor que viene de sqlite YA es UTC, el resultado
+// queda desfasado por el offset de Venezuela (hasta 4 horas). Si el string
+// ya trae 'Z' o un offset explícito, se deja igual (mismo criterio que
+// fechaVenezuelaDeTimestampSqlite en el backend).
+export function normalizarTimestampSqlite(str) {
+  if (typeof str !== 'string') return str;
+  return /[zZ]|[+-]\d{2}:\d{2}$/.test(str) ? str : `${str.replace(' ', 'T')}Z`;
+}
+
 // Compact datetime in Venezuela timezone for ticket: "30/06/26 10:46PM"
 export function fechaCorta(isoStr) {
-  const d = isoStr ? new Date(isoStr) : new Date();
+  const d = isoStr ? new Date(normalizarTimestampSqlite(isoStr)) : new Date();
   try {
     const p = new Intl.DateTimeFormat('es-VE', {
       timeZone: 'America/Caracas',
@@ -97,14 +109,15 @@ export function fechaCorta(isoStr) {
 // Full datetime display in Venezuela timezone: "30/06/26 10:46 p. m."
 export function horaVenezuela(fechaISO) {
   if (!fechaISO) return '';
+  const iso = normalizarTimestampSqlite(fechaISO);
   try {
-    return new Date(fechaISO).toLocaleString('es-VE', {
+    return new Date(iso).toLocaleString('es-VE', {
       timeZone: 'America/Caracas',
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit', hour12: true,
     });
   } catch {
-    return new Date(fechaISO).toLocaleString('es-VE');
+    return new Date(iso).toLocaleString('es-VE');
   }
 }
 
