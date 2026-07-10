@@ -153,6 +153,9 @@ export const getTopAnimalitos = (fecha) =>
 export const getTopLoterias = (fecha) =>
   req('GET', `/reportes/top-loterias${fecha ? `?fecha=${fecha}` : ''}`);
 
+export const getPremiosPotenciales = (fecha) =>
+  req('GET', `/reportes/premios-potenciales${fecha ? `?fecha=${fecha}` : ''}`);
+
 export const getUsuarios = () =>
   req('GET', '/usuarios');
 

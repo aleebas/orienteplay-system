@@ -8,6 +8,7 @@ import {
   getLimitesUso,
   getTopAnimalitos,
   getTopLoterias,
+  getPremiosPotenciales,
   getCandidatosResultados,
   confirmarCandidato,
   descartarCandidato,
@@ -45,6 +46,7 @@ export default function Dashboard() {
   const [limitesUso, setLimitesUso] = useState([]);
   const [topAnimalitos, setTopAnimalitos] = useState([]);
   const [topLoterias, setTopLoterias] = useState([]);
+  const [premiosPotenciales, setPremiosPotenciales] = useState(null);
   const [candidatos, setCandidatos] = useState([]);
   const [procesandoCandidato, setProcesandoCandidato] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -52,7 +54,7 @@ export default function Dashboard() {
 
   const cargar = useCallback(async () => {
     const fecha = TODAY();
-    const [r1, r2, r3, r4, r5, r6, r7, r8] = await Promise.allSettled([
+    const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.allSettled([
       caja?.id ? getResumenCaja(caja.id) : Promise.resolve(null),
       getReporteVentasPorLoteria(fecha),
       getReporteVentasPorVendedor(fecha),
@@ -61,6 +63,7 @@ export default function Dashboard() {
       getTopAnimalitos(fecha),
       getTopLoterias(fecha),
       getCandidatosResultados(fecha),
+      getPremiosPotenciales(fecha),
     ]);
     if (r1.status === 'fulfilled') setResumen(r1.value);
     if (r2.status === 'fulfilled') setPorLoteria(r2.value || []);
@@ -70,6 +73,7 @@ export default function Dashboard() {
     if (r6.status === 'fulfilled') setTopAnimalitos(r6.value || []);
     if (r7.status === 'fulfilled') setTopLoterias(r7.value || []);
     if (r8.status === 'fulfilled') setCandidatos(r8.value || []);
+    if (r9.status === 'fulfilled') setPremiosPotenciales(r9.value);
     setLastUpdate(new Date());
   }, [caja?.id]);
 
@@ -165,26 +169,28 @@ export default function Dashboard() {
       <div className="metrics-grid">
         <MetricCard
           icon="💰"
-          label="Ventas hoy"
+          label="Total recaudado"
           value={resumen ? fmt(resumen.ventas_total) : '—'}
-          sub={resumen ? `${resumen.ventas_cantidad} jugadas` : 'Sin caja abierta'}
+          sub={resumen
+            ? `Efectivo ${fmt(resumen.ventas_efectivo)} · Banco ${fmt(resumen.ventas_banco)}`
+            : 'Sin caja abierta'}
           color="var(--primary)"
         />
         <MetricCard
           icon="🏆"
-          label="Premios pagados"
+          label="Premios pagados hoy"
           value={resumen ? fmt(resumen.premios_pagados_total) : '—'}
           sub={resumen ? `${resumen.premios_pagados_cantidad} tickets` : ''}
           color="var(--danger)"
         />
         <MetricCard
-          icon="📈"
-          label="Comisión estimada"
-          value={resumen ? fmt(resumen.comision_estimada) : '—'}
-          sub={resumen && resumen.ventas_total > 0
-            ? `${Math.round((resumen.comision_estimada / resumen.ventas_total) * 100)}% del total`
+          icon="⚠️"
+          label="Premios potenciales pendientes"
+          value={premiosPotenciales ? fmt(premiosPotenciales.total_potencial) : '—'}
+          sub={premiosPotenciales
+            ? `${premiosPotenciales.cantidad_tickets} tickets sin resultado — si TODOS ganaran`
             : ''}
-          color="var(--success)"
+          color="var(--warning)"
         />
         <MetricCard
           icon="💵"
@@ -230,6 +236,7 @@ export default function Dashboard() {
                 <thead>
                   <tr>
                     <th>Animalito</th>
+                    <th>Lotería</th>
                     <th style={{ textAlign: 'right' }}>Total</th>
                   </tr>
                 </thead>
@@ -237,6 +244,7 @@ export default function Dashboard() {
                   {topAnimalitos.map((a, i) => (
                     <tr key={i}>
                       <td>{EMOJI_MAP[a.nombre] || '🐾'} {a.numero} - {a.nombre}</td>
+                      <td className="text-muted text-sm">{a.loteria_nombre}</td>
                       <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(a.total)}</td>
                     </tr>
                   ))}

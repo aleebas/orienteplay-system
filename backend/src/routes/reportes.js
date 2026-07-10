@@ -128,20 +128,42 @@ router.get('/ultimas-ventas', (req, res) => {
   res.json(rows);
 });
 
-// Top 5 animalitos con mas dinero apostado en el dia
+// Top 5 animalitos con mas dinero apostado en el dia. Se agrupa por a.id
+// (no por numero+nombre) porque cada loteria tiene su propio catalogo de
+// animalitos -- el mismo numero puede ser un animal distinto segun la
+// loteria, asi que agrupar por id ya evita mezclar loterias sin querer;
+// solo faltaba mostrar de cual es cada fila.
 router.get('/top-animalitos', (req, res) => {
   const f = req.query.fecha || fechaVenezuelaHoy();
   const rows = db.prepare(`
-    SELECT a.numero, a.nombre, SUM(j.monto) AS total
+    SELECT a.numero, a.nombre, l.nombre AS loteria_nombre, SUM(j.monto) AS total
     FROM jugada_animalitos ja
     JOIN jugadas j ON j.id = ja.jugada_id
     JOIN animalitos a ON a.id = ja.animalito_id
+    JOIN loterias l ON l.id = a.loteria_id
     WHERE j.agencia_id = ? AND j.fecha_sorteo = ?
     GROUP BY a.id
     ORDER BY total DESC
     LIMIT 5
   `).all(req.user.agencia_id, f);
   res.json(rows);
+});
+
+// Estimacion de cuanto habria que pagar HOY si TODOS los tickets todavia
+// pendientes (su sorteo aun no tiene resultado oficial cargado) resultaran
+// ganadores -- la exposicion/riesgo maximo del dia. Util en un modelo
+// self-banking (sin reasegurar apuestas en ningun lado) para saber cuanto
+// esta en juego, no cuanto se va a pagar en realidad.
+router.get('/premios-potenciales', (req, res) => {
+  const f = req.query.fecha || fechaVenezuelaHoy();
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(j.monto * m.multiplicador), 0) AS total_potencial, COUNT(*) AS cantidad_tickets
+    FROM jugadas j
+    JOIN tickets t ON t.jugada_id = j.id
+    JOIN modos_juego m ON m.id = j.modo_juego_id
+    WHERE j.agencia_id = ? AND j.fecha_sorteo = ? AND t.estado = 'pendiente'
+  `).get(req.user.agencia_id, f);
+  res.json(row);
 });
 
 // Top 3 loterias con mas ventas en el dia
