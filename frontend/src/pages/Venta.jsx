@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV, getTicket, pagarPremio, consultarCupoLote } from '../api/cliente';
+import { getCatalogoLoterias, validarJugadas, registrarVenta, getVenta, imprimirTicket, getTasaBCV, getTicket, pagarPremio, consultarCupoLote, getConfiguracion, solicitarPagoDigital, confirmarPagoDigital, cancelarPagoDigital } from '../api/cliente';
 import SelectorAnimalito, { EMOJI_MAP, LOTERIA_SLUG_IMAGEN } from '../components/SelectorAnimalito';
 import Comprobante from '../components/Comprobante';
 import BotonWhatsApp from '../components/BotonWhatsApp';
-import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, ahoraVenezuela } from '../utils/formato';
+import ModalPagoDigital from '../components/ModalPagoDigital';
+import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, ahoraVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
+
+const METODOS_DIGITALES_PREMIO = ['pago_movil', 'biopago'];
 import { hayWebUSBDisponible, obtenerImpresoraEmparejada, emparejarImpresora, imprimirViaWebUSB } from '../utils/webUsbPrinter';
 
 const TODAY = () => fechaHoyVenezuela();
@@ -152,6 +155,15 @@ export default function Venta() {
   // en el comprobante impreso) y esa venta tiene mas de una jugada/ticket,
   // no hay un unico ticket que mostrar -- se lista para que elija cual.
   const [ventaMultiple, setVentaMultiple] = useState(null);
+  // Pago de premio por Pago Movil/Biopago desde este mismo modal: pasa
+  // primero por solicitar-digital (espera confirmacion del encargado),
+  // igual que en Pagos.jsx y Tickets.jsx.
+  const [configPagos, setConfigPagos] = useState({});
+  const [showModalDigitalVenta, setShowModalDigitalVenta] = useState(false);
+
+  useEffect(() => {
+    getConfiguracion().then(setConfigPagos).catch(() => {});
+  }, []);
 
   // ── Carga catálogo ────────────────────────────────────────
   useEffect(() => {
@@ -680,6 +692,7 @@ export default function Venta() {
 
   function cerrarModalBuscarTicket() {
     setModalBuscarTicket(false);
+    setShowModalDigitalVenta(false);
   }
 
   // El comprobante impreso muestra el codigo de VENTA (V-XXXXXXXX) en
@@ -740,6 +753,13 @@ export default function Venta() {
 
   async function handlePagarTicketModal() {
     if (!ticketBuscado || !caja?.id) return;
+    // Pago móvil/biopago pasan por el modal que pide los datos del
+    // beneficiario y quedan "esperando confirmación" -- igual que en
+    // Pagos.jsx y Tickets.jsx, no se marcan pagados al instante.
+    if (METODOS_DIGITALES_PREMIO.includes(ticketBuscado.jugada.metodo_pago)) {
+      setShowModalDigitalVenta(true);
+      return;
+    }
     setErrorBuscarTicket('');
     setLoadingPagarModal(true);
     try {
@@ -747,6 +767,62 @@ export default function Venta() {
       setTicketBuscado(await getTicket(ticketBuscado.ticket.codigo));
     } catch (err) {
       setErrorBuscarTicket(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : err.message);
+    } finally {
+      setLoadingPagarModal(false);
+    }
+  }
+
+  async function handleSolicitarPagoDigitalModal(beneficiario) {
+    if (!ticketBuscado || !caja?.id) return;
+    setErrorBuscarTicket('');
+    setLoadingPagarModal(true);
+    try {
+      const res = await solicitarPagoDigital(ticketBuscado.ticket.codigo, caja.id, {
+        banco_beneficiario: beneficiario.banco,
+        cedula_beneficiario: beneficiario.cedula,
+        telefono_beneficiario: beneficiario.telefono,
+        nombre_beneficiario: beneficiario.nombre,
+      });
+      abrirWhatsAppPagoDigital({
+        ticket: ticketBuscado.ticket,
+        jugada: ticketBuscado.jugada,
+        montoPremio: res.monto_premio,
+        beneficiario,
+        whatsappDestino: configPagos.whatsapp_pagos_digitales,
+      });
+      setTicketBuscado(await getTicket(ticketBuscado.ticket.codigo));
+      setShowModalDigitalVenta(false);
+    } catch (err) {
+      setErrorBuscarTicket(err.message || 'No se pudo enviar la solicitud');
+    } finally {
+      setLoadingPagarModal(false);
+    }
+  }
+
+  async function handleConfirmarPagoDigitalModal() {
+    if (!ticketBuscado || !caja?.id) return;
+    setErrorBuscarTicket('');
+    setLoadingPagarModal(true);
+    try {
+      await confirmarPagoDigital(ticketBuscado.ticket.codigo, caja.id);
+      setTicketBuscado(await getTicket(ticketBuscado.ticket.codigo));
+    } catch (err) {
+      setErrorBuscarTicket(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : (err.message || 'No se pudo confirmar el pago'));
+    } finally {
+      setLoadingPagarModal(false);
+    }
+  }
+
+  async function handleCancelarPagoDigitalModal() {
+    if (!ticketBuscado) return;
+    if (!confirm('¿Cancelar esta solicitud de pago digital? Podrás volver a solicitarla después.')) return;
+    setErrorBuscarTicket('');
+    setLoadingPagarModal(true);
+    try {
+      await cancelarPagoDigital(ticketBuscado.ticket.codigo);
+      setTicketBuscado(await getTicket(ticketBuscado.ticket.codigo));
+    } catch (err) {
+      setErrorBuscarTicket(err.message || 'No se pudo cancelar la solicitud');
     } finally {
       setLoadingPagarModal(false);
     }
@@ -996,14 +1072,44 @@ export default function Venta() {
                     {caja?.requiere_cierre && (
                       <div className="alert alert-warning">Tienes una caja del {caja.fecha_caja_abierta} sin cerrar. Ciérrala en Caja antes de pagar premios.</div>
                     )}
-                    <button
-                      className="btn btn-success"
-                      style={{ width: '100%', marginBottom: 8 }}
-                      onClick={handlePagarTicketModal}
-                      disabled={loadingPagarModal || !caja || caja.requiere_cierre}
-                    >
-                      {loadingPagarModal ? 'Procesando...' : '💰 Pagar ticket'}
-                    </button>
+
+                    {ticketBuscado.solicitud_digital_pendiente ? (
+                      <>
+                        <div className="alert alert-info">
+                          📲 Solicitud enviada al encargado, esperando confirmación de pago.<br />
+                          {ticketBuscado.solicitud_digital_pendiente.nombre_beneficiario} · {ticketBuscado.solicitud_digital_pendiente.banco_beneficiario}
+                        </div>
+                        <button
+                          className="btn btn-success"
+                          style={{ width: '100%', marginBottom: 8 }}
+                          onClick={handleConfirmarPagoDigitalModal}
+                          disabled={loadingPagarModal || !caja || caja.requiere_cierre}
+                        >
+                          {loadingPagarModal ? 'Procesando...' : '✅ Confirmar que el encargado ya pagó'}
+                        </button>
+                        <button
+                          className="btn btn-outline"
+                          style={{ width: '100%', marginBottom: 8 }}
+                          onClick={handleCancelarPagoDigitalModal}
+                          disabled={loadingPagarModal}
+                        >
+                          Cancelar solicitud
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="btn btn-success"
+                        style={{ width: '100%', marginBottom: 8 }}
+                        onClick={handlePagarTicketModal}
+                        disabled={loadingPagarModal || !caja || caja.requiere_cierre}
+                      >
+                        {loadingPagarModal
+                          ? 'Procesando...'
+                          : METODOS_DIGITALES_PREMIO.includes(ticketBuscado.jugada.metodo_pago)
+                            ? '📲 Solicitar pago digital'
+                            : '💰 Pagar ticket'}
+                      </button>
+                    )}
                   </>
                 )}
 
@@ -1025,6 +1131,16 @@ export default function Venta() {
             )}
           </div>
         </div>
+      )}
+
+      {showModalDigitalVenta && ticketBuscado && (
+        <ModalPagoDigital
+          montoPremio={ticketBuscado.jugada.monto * ticketBuscado.jugada.multiplicador}
+          metodoPago={ticketBuscado.jugada.metodo_pago}
+          loading={loadingPagarModal}
+          onConfirmar={handleSolicitarPagoDigitalModal}
+          onCancelar={() => setShowModalDigitalVenta(false)}
+        />
       )}
 
       <div className="venta-layout venta-layout-3col">

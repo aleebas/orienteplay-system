@@ -238,6 +238,34 @@ CREATE TABLE IF NOT EXISTS pagos_premio (
 );
 
 -- ----------------------------------------------------------
+-- SOLICITUDES_PREMIO_DIGITAL: flujo de pago de premio por Pago Movil o
+-- Biopago que requiere que "el encargado" (fuera del sistema) haga la
+-- transferencia real. El ticket NO se marca pagado ni se descuenta de
+-- ninguna caja al crear la solicitud -- eso solo pasa cuando alguien
+-- confirma que el encargado ya transfirio (ver POST /pagos/:codigo/
+-- confirmar-digital). Antes esto se hacia en un solo paso (se marcaba
+-- pagado al instante, antes de que el encargado transfiriera de verdad),
+-- lo que podia descuadrar la caja si el pago se retrasaba o fallaba.
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS solicitudes_premio_digital (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id),
+  monto_premio REAL NOT NULL,
+  banco_beneficiario TEXT,
+  cedula_beneficiario TEXT,
+  telefono_beneficiario TEXT,
+  nombre_beneficiario TEXT,
+  estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'confirmado', 'cancelado')),
+  solicitado_por INTEGER NOT NULL REFERENCES usuarios(id),
+  solicitado_en TEXT NOT NULL DEFAULT (datetime('now')),
+  caja_id INTEGER REFERENCES cajas(id),
+  confirmado_por INTEGER REFERENCES usuarios(id),
+  confirmado_en TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_solicitudes_digital_ticket ON solicitudes_premio_digital(ticket_id);
+
+-- ----------------------------------------------------------
 -- COMISIONES: % fijo de comisión por lotería (lo que define el negocio)
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS comisiones (

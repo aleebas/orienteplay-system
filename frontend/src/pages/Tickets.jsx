@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado, pagarPremio, getConfiguracion } from '../api/cliente';
+import { getTickets, getTicket, anularVenta, getCreditosPendientes, marcarCreditoCobrado, pagarPremio, getConfiguracion, solicitarPagoDigital, confirmarPagoDigital, cancelarPagoDigital } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import ModalPagoDigital from '../components/ModalPagoDigital';
 import { hora12, fmt, horaVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
@@ -217,12 +217,14 @@ export default function Tickets() {
     }
   }
 
-  async function handleConfirmarPagoDigital(beneficiario) {
+  // Paso 1: crea la solicitud (el ticket sigue "ganador", no se marca
+  // pagado ni se descuenta de ninguna caja todavia) y abre WhatsApp.
+  async function handleSolicitarPagoDigital(beneficiario) {
     if (!ticketDetalle || !caja?.id) return;
     setErrorPagar('');
     setPagandoPremio(true);
     try {
-      const res = await pagarPremio(ticketDetalle.ticket.codigo, caja.id, {
+      const res = await solicitarPagoDigital(ticketDetalle.ticket.codigo, caja.id, {
         banco_beneficiario: beneficiario.banco,
         cedula_beneficiario: beneficiario.cedula,
         telefono_beneficiario: beneficiario.telefono,
@@ -231,18 +233,50 @@ export default function Tickets() {
       abrirWhatsAppPagoDigital({
         ticket: ticketDetalle.ticket,
         jugada: ticketDetalle.jugada,
-        montoPremio: res.monto_pagado,
+        montoPremio: res.monto_premio,
         beneficiario,
         whatsappDestino: config.whatsapp_pagos_digitales,
       });
       const actualizado = await getTicket(ticketDetalle.ticket.codigo);
       setTicketDetalle(actualizado);
+      setShowModalDigital(false);
+    } catch (err) {
+      setErrorPagar(err.message || 'No se pudo enviar la solicitud');
+    } finally {
+      setPagandoPremio(false);
+    }
+  }
+
+  // Paso 2: el encargado ya confirmo que transfirio -- aqui si se marca
+  // pagado y se descuenta de la caja actualmente abierta.
+  async function handleConfirmarPagoDigital() {
+    if (!ticketDetalle || !caja?.id) return;
+    setErrorPagar('');
+    setPagandoPremio(true);
+    try {
+      await confirmarPagoDigital(ticketDetalle.ticket.codigo, caja.id);
+      const actualizado = await getTicket(ticketDetalle.ticket.codigo);
+      setTicketDetalle(actualizado);
       setLista(prev => prev.map(t =>
         t.ticket_codigo === actualizado.ticket.codigo ? { ...t, estado: actualizado.ticket.estado } : t
       ));
-      setShowModalDigital(false);
     } catch (err) {
-      setErrorPagar(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : (err.message || 'No se pudo pagar el premio'));
+      setErrorPagar(err.status === 409 ? 'Este ticket ya fue pagado anteriormente' : (err.message || 'No se pudo confirmar el pago'));
+    } finally {
+      setPagandoPremio(false);
+    }
+  }
+
+  async function handleCancelarPagoDigital() {
+    if (!ticketDetalle) return;
+    if (!confirm('¿Cancelar esta solicitud de pago digital? Podrás volver a solicitarla después.')) return;
+    setErrorPagar('');
+    setPagandoPremio(true);
+    try {
+      await cancelarPagoDigital(ticketDetalle.ticket.codigo);
+      setTicketDetalle(await getTicket(ticketDetalle.ticket.codigo));
+    } catch (err) {
+      setErrorPagar(err.message || 'No se pudo cancelar la solicitud');
     } finally {
       setPagandoPremio(false);
     }
@@ -564,17 +598,48 @@ export default function Tickets() {
                     {!caja && (
                       <div className="alert alert-warning">No hay caja abierta. Abre una caja para pagar premios.</div>
                     )}
+                    {caja?.requiere_cierre && (
+                      <div className="alert alert-warning">Tienes una caja del {caja.fecha_caja_abierta} sin cerrar. Ciérrala en Caja antes de pagar premios.</div>
+                    )}
                     {errorPagar && <div className="alert alert-danger">{errorPagar}</div>}
-                    <button
-                      className="btn btn-success"
-                      style={{ width: '100%', marginBottom: 12 }}
-                      onClick={handlePagarPremio}
-                      disabled={pagandoPremio || !caja}
-                    >
-                      {pagandoPremio
-                        ? 'Procesando...'
-                        : `💰 Pagar premio — ${fmt(ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador)}`}
-                    </button>
+
+                    {ticketDetalle.solicitud_digital_pendiente ? (
+                      <>
+                        <div className="alert alert-info">
+                          📲 Solicitud enviada al encargado el {horaVenezuela(ticketDetalle.solicitud_digital_pendiente.solicitado_en)}, esperando confirmación de pago.<br />
+                          {ticketDetalle.solicitud_digital_pendiente.nombre_beneficiario} · {ticketDetalle.solicitud_digital_pendiente.banco_beneficiario} · {ticketDetalle.solicitud_digital_pendiente.telefono_beneficiario}
+                        </div>
+                        <button
+                          className="btn btn-success"
+                          style={{ width: '100%', marginBottom: 8 }}
+                          onClick={handleConfirmarPagoDigital}
+                          disabled={pagandoPremio || !caja || caja.requiere_cierre}
+                        >
+                          {pagandoPremio ? 'Procesando...' : '✅ Confirmar que el encargado ya pagó'}
+                        </button>
+                        <button
+                          className="btn btn-outline"
+                          style={{ width: '100%', marginBottom: 12 }}
+                          onClick={handleCancelarPagoDigital}
+                          disabled={pagandoPremio}
+                        >
+                          Cancelar solicitud
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="btn btn-success"
+                        style={{ width: '100%', marginBottom: 12 }}
+                        onClick={handlePagarPremio}
+                        disabled={pagandoPremio || !caja || caja.requiere_cierre}
+                      >
+                        {pagandoPremio
+                          ? 'Procesando...'
+                          : METODOS_DIGITALES.includes(ticketDetalle.jugada.metodo_pago)
+                            ? `📲 Solicitar pago digital — ${fmt(ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador)}`
+                            : `💰 Pagar premio — ${fmt(ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador)}`}
+                      </button>
+                    )}
                   </>
                 )}
                 {ticketDetalle.ticket.estado === 'perdedor' && (
@@ -605,7 +670,7 @@ export default function Tickets() {
           montoPremio={ticketDetalle.jugada.monto * ticketDetalle.jugada.multiplicador}
           metodoPago={ticketDetalle.jugada.metodo_pago}
           loading={pagandoPremio}
-          onConfirmar={handleConfirmarPagoDigital}
+          onConfirmar={handleSolicitarPagoDigital}
           onCancelar={() => setShowModalDigital(false)}
         />
       )}

@@ -542,13 +542,23 @@ router.get('/ticket/:codigo', (req, res) => {
 
   const pago = db.prepare(`SELECT * FROM pagos_premio WHERE ticket_id = ?`).get(ticket.id);
 
+  // Si el premio es por Pago Movil/Biopago y hay una solicitud enviada al
+  // encargado esperando confirmacion, se incluye aqui para que la pantalla
+  // de pago muestre "esperando confirmacion" en vez del boton de pagar.
+  const solicitudDigitalPendiente = db.prepare(
+    `SELECT * FROM solicitudes_premio_digital WHERE ticket_id = ? AND estado = 'pendiente'`
+  ).get(ticket.id);
+
   const resultado = db.prepare(
     `SELECT r.*, a.numero AS animalito_numero, a.nombre AS animalito_nombre
      FROM resultados r JOIN animalitos a ON a.id = r.animalito_id
      WHERE r.sorteo_id = ? AND r.fecha = ?`
   ).get(jugada.sorteo_id, jugada.fecha_sorteo);
 
-  res.json({ ticket, jugada, animalitos, pago: pago || null, resultado: resultado || null });
+  res.json({
+    ticket, jugada, animalitos, pago: pago || null, resultado: resultado || null,
+    solicitud_digital_pendiente: solicitudDigitalPendiente || null,
+  });
 });
 
 module.exports = router;

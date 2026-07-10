@@ -114,6 +114,20 @@ export const descartarCandidato = (id) =>
 export const pagarPremio = (codigoTicket, caja_id, datosBeneficiario) =>
   req('POST', `/pagos/${codigoTicket}`, { caja_id, ...datosBeneficiario });
 
+// Flujo de premio digital (Pago Movil/Biopago) con confirmacion del
+// encargado -- ver backend/src/routes/pagos.js.
+export const solicitarPagoDigital = (codigoTicket, caja_id, datosBeneficiario) =>
+  req('POST', `/pagos/${codigoTicket}/solicitar-digital`, { caja_id, ...datosBeneficiario });
+
+export const confirmarPagoDigital = (codigoTicket, caja_id) =>
+  req('POST', `/pagos/${codigoTicket}/confirmar-digital`, { caja_id });
+
+export const cancelarPagoDigital = (codigoTicket) =>
+  req('POST', `/pagos/${codigoTicket}/cancelar-digital`);
+
+export const getSolicitudesDigitalesPendientes = () =>
+  req('GET', '/pagos/solicitudes-digitales-pendientes');
+
 export const getLimites = (agenciaId) =>
   req('GET', `/agencias/${agenciaId}/limites`);
 

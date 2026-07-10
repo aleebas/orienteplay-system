@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getGanadoresPendientes, getTicket, getVenta, pagarPremio, getConfiguracion } from '../api/cliente';
+import { getGanadoresPendientes, getTicket, getVenta, pagarPremio, getConfiguracion, solicitarPagoDigital, confirmarPagoDigital, cancelarPagoDigital, getSolicitudesDigitalesPendientes } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import ModalPagoDigital from '../components/ModalPagoDigital';
 import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
@@ -26,13 +26,23 @@ export default function Pagos() {
   // si esa venta tiene mas de un ticket, se listan para elegir cual.
   const [ventaMultiple, setVentaMultiple] = useState(null);
 
+  // Solicitudes de pago digital ya enviadas al encargado, esperando que
+  // confirme -- se listan aparte para no depender de que la operadora
+  // recuerde el codigo del ticket.
+  const [solicitudesDigitales, setSolicitudesDigitales] = useState([]);
+
   useEffect(() => {
     getGanadoresPendientes(TODAY)
       .then(setGanadores)
       .catch(() => {})
       .finally(() => setLoading(false));
     getConfiguracion().then(setConfig).catch(() => {});
+    cargarSolicitudesDigitales();
   }, []);
+
+  function cargarSolicitudesDigitales() {
+    getSolicitudesDigitalesPendientes().then(setSolicitudesDigitales).catch(() => {});
+  }
 
   async function buscarTicket(cod) {
     const c = (cod || codigo).trim().toUpperCase();
@@ -112,12 +122,15 @@ export default function Pagos() {
     }
   }
 
-  async function handleConfirmarPagoDigital(beneficiario) {
+  // Paso 1 del flujo digital: guarda los datos del beneficiario, crea la
+  // solicitud (el ticket SIGUE como "ganador", no se marca pagado todavia)
+  // y abre WhatsApp con el mensaje para el encargado.
+  async function handleSolicitarPagoDigital(beneficiario) {
     if (!ticketDetalle || !caja?.id) return;
     setError('');
     setLoadingPagar(true);
     try {
-      const res = await pagarPremio(ticketDetalle.ticket.codigo, caja.id, {
+      const res = await solicitarPagoDigital(ticketDetalle.ticket.codigo, caja.id, {
         banco_beneficiario: beneficiario.banco,
         cedula_beneficiario: beneficiario.cedula,
         telefono_beneficiario: beneficiario.telefono,
@@ -126,22 +139,53 @@ export default function Pagos() {
       abrirWhatsAppPagoDigital({
         ticket: ticketDetalle.ticket,
         jugada: ticketDetalle.jugada,
-        montoPremio: res.monto_pagado,
+        montoPremio: res.monto_premio,
         beneficiario,
         whatsappDestino: config.whatsapp_pagos_digitales,
       });
-      setExito(`✅ Premio pagado: ${fmt(res.monto_pagado)}`);
+      setExito('📲 Solicitud enviada al encargado. Confírmala como pagada cuando te avise que ya transfirió.');
       setShowModalDigital(false);
+      setTicketDetalle(await getTicket(ticketDetalle.ticket.codigo));
+      cargarSolicitudesDigitales();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingPagar(false);
+    }
+  }
+
+  // Paso 2: el encargado ya avisó que transfirió -- aquí sí se marca el
+  // ticket como pagado y se descuenta de la caja actualmente abierta.
+  async function handleConfirmarPagoDigital() {
+    if (!ticketDetalle || !caja?.id) return;
+    setError('');
+    setLoadingPagar(true);
+    try {
+      const res = await confirmarPagoDigital(ticketDetalle.ticket.codigo, caja.id);
+      setExito(`✅ Premio pagado: ${fmt(res.monto_pagado)}`);
       setTicketDetalle(null);
       setCodigo('');
       const g = await getGanadoresPendientes(TODAY);
       setGanadores(g);
+      cargarSolicitudesDigitales();
     } catch (err) {
-      if (err.status === 409) {
-        setError('⚠️ Este ticket ya fue pagado anteriormente');
-      } else {
-        setError(err.message);
-      }
+      setError(err.status === 409 ? '⚠️ Este ticket ya fue pagado anteriormente' : err.message);
+    } finally {
+      setLoadingPagar(false);
+    }
+  }
+
+  async function handleCancelarPagoDigital() {
+    if (!ticketDetalle) return;
+    if (!confirm('¿Cancelar esta solicitud de pago digital? Podrás volver a solicitarla después.')) return;
+    setError('');
+    setLoadingPagar(true);
+    try {
+      await cancelarPagoDigital(ticketDetalle.ticket.codigo);
+      setTicketDetalle(await getTicket(ticketDetalle.ticket.codigo));
+      cargarSolicitudesDigitales();
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoadingPagar(false);
     }
@@ -284,13 +328,43 @@ export default function Pagos() {
               {caja?.requiere_cierre && (
                 <div className="alert alert-warning">Tienes una caja del {caja.fecha_caja_abierta} sin cerrar. Ciérrala en Caja antes de pagar premios.</div>
               )}
-              <button
-                className="btn btn-success"
-                onClick={handlePagar}
-                disabled={loadingPagar || !caja || caja.requiere_cierre}
-              >
-                {loadingPagar ? 'Procesando...' : `✓ Confirmar pago de ${fmt(montoPremio)}`}
-              </button>
+
+              {ticketDetalle.solicitud_digital_pendiente ? (
+                <>
+                  <div className="alert alert-info">
+                    📲 Solicitud enviada al encargado el {horaVenezuela(ticketDetalle.solicitud_digital_pendiente.solicitado_en)}, esperando confirmación de pago.<br />
+                    {ticketDetalle.solicitud_digital_pendiente.nombre_beneficiario} · {ticketDetalle.solicitud_digital_pendiente.banco_beneficiario} · {ticketDetalle.solicitud_digital_pendiente.telefono_beneficiario}
+                  </div>
+                  <button
+                    className="btn btn-success"
+                    style={{ width: '100%', marginBottom: 8 }}
+                    onClick={handleConfirmarPagoDigital}
+                    disabled={loadingPagar || !caja || caja.requiere_cierre}
+                  >
+                    {loadingPagar ? 'Procesando...' : '✅ Confirmar que el encargado ya pagó'}
+                  </button>
+                  <button
+                    className="btn btn-outline"
+                    style={{ width: '100%' }}
+                    onClick={handleCancelarPagoDigital}
+                    disabled={loadingPagar}
+                  >
+                    Cancelar solicitud
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="btn btn-success"
+                  onClick={handlePagar}
+                  disabled={loadingPagar || !caja || caja.requiere_cierre}
+                >
+                  {loadingPagar
+                    ? 'Procesando...'
+                    : METODOS_DIGITALES.includes(ticketDetalle.jugada.metodo_pago)
+                      ? `📲 Solicitar pago digital — ${fmt(montoPremio)}`
+                      : `✓ Confirmar pago de ${fmt(montoPremio)}`}
+                </button>
+              )}
             </>
           )}
 
@@ -308,6 +382,34 @@ export default function Pagos() {
           {ticketDetalle.ticket.estado === 'pendiente' && (
             <div className="alert alert-info">Resultado pendiente. El sorteo aún no ha sido cargado.</div>
           )}
+        </div>
+      )}
+
+      {/* Solicitudes de pago digital esperando confirmación del encargado */}
+      {solicitudesDigitales.length > 0 && (
+        <div className="card">
+          <h2>📲 Pagos digitales esperando confirmación ({solicitudesDigitales.length})</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {solicitudesDigitales.map(s => (
+              <div key={s.solicitud_id} className="carrito-item">
+                <div className="carrito-info">
+                  <div className="carrito-titulo">{s.ticket_codigo}</div>
+                  <div className="carrito-meta">
+                    {s.loteria_nombre} · {hora12(s.sorteo_hora)} · {s.nombre_beneficiario} · {s.banco_beneficiario}
+                  </div>
+                  <div className="text-muted text-sm">
+                    Enviado {horaVenezuela(s.solicitado_en)} → Premio: <strong className="text-success">{fmt(s.monto_premio)}</strong>
+                  </div>
+                </div>
+                <button
+                  className="btn btn-primary btn-sm btn-inline"
+                  onClick={() => buscarTicket(s.ticket_codigo)}
+                >
+                  Ver
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -349,7 +451,7 @@ export default function Pagos() {
           montoPremio={montoPremio}
           metodoPago={ticketDetalle.jugada.metodo_pago}
           loading={loadingPagar}
-          onConfirmar={handleConfirmarPagoDigital}
+          onConfirmar={handleSolicitarPagoDigital}
           onCancelar={() => setShowModalDigital(false)}
         />
       )}
