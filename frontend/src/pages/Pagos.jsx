@@ -216,10 +216,13 @@ export default function Pagos() {
               {!caja && (
                 <div className="alert alert-warning">No hay caja abierta. Abre una caja para pagar premios.</div>
               )}
+              {caja?.requiere_cierre && (
+                <div className="alert alert-warning">Tienes una caja del {caja.fecha_caja_abierta} sin cerrar. Ciérrala en Caja antes de pagar premios.</div>
+              )}
               <button
                 className="btn btn-success"
                 onClick={handlePagar}
-                disabled={loadingPagar || !caja}
+                disabled={loadingPagar || !caja || caja.requiere_cierre}
               >
                 {loadingPagar ? 'Procesando...' : `✓ Confirmar pago de ${fmt(montoPremio)}`}
               </button>

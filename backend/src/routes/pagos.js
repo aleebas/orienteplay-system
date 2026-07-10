@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { requireAuth } = require('../middleware/auth');
+const { fechaVenezuelaDeTimestampSqlite, cajaEsDeHoy } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -15,6 +16,22 @@ router.use(requireAuth);
 router.post('/:codigoTicket', (req, res) => {
   const { caja_id, banco_beneficiario, cedula_beneficiario, telefono_beneficiario, nombre_beneficiario } = req.body;
   if (!caja_id) return res.status(400).json({ error: 'caja_id es requerido' });
+
+  const caja = db.prepare(`SELECT * FROM cajas WHERE id = ? AND estado = 'abierta'`).get(caja_id);
+  if (!caja) return res.status(400).json({ error: 'La caja indicada no existe o no esta abierta' });
+
+  // Mismo resguardo que en el registro de ventas: no se puede pagar un
+  // premio contra una caja que quedo abierta de un dia anterior sin
+  // declarar -- el efectivo de ese pago quedaria mezclado en el dia
+  // equivocado.
+  if (!cajaEsDeHoy(caja)) {
+    return res.status(409).json({
+      error: `La caja tiene una apertura del ${fechaVenezuelaDeTimestampSqlite(caja.abierta_en)} sin cerrar. Ciérrala antes de pagar premios.`,
+      requiere_cierre_anterior: true,
+      caja_id: caja.id,
+      fecha_caja_abierta: fechaVenezuelaDeTimestampSqlite(caja.abierta_en),
+    });
+  }
 
   const ticket = db.prepare(`SELECT * FROM tickets WHERE codigo = ?`).get(req.params.codigoTicket);
   if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });

@@ -73,7 +73,19 @@ function fechaHoraVenezuela(fecha, hora) {
   return new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
 }
 
+// True si la caja (fila de la tabla `cajas`, con columna abierta_en) sigue
+// siendo la de HOY en Venezuela. Una caja que quedo abierta de un dia
+// anterior sin cerrarse (la operadora se fue sin declarar, o la sesion
+// simplemente siguio abierta cruzando medianoche) no debe poder recibir
+// mas ventas ni pagos nuevos -- eso mezclaria dos dias distintos en una
+// misma caja y descuadraria el cierre/rendicion.
+function cajaEsDeHoy(caja) {
+  if (!caja?.abierta_en) return false;
+  return fechaVenezuelaDeTimestampSqlite(caja.abierta_en) === fechaVenezuelaHoy();
+}
+
 module.exports = {
   fechaVenezuelaHoy, ahoraVenezuela, horaVenezuelaActual,
   fechaVenezuelaDe, fechaVenezuelaDeTimestampSqlite, fechaHoraVenezuela,
+  cajaEsDeHoy,
 };

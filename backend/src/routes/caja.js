@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { requireAuth } = require('../middleware/auth');
-const { fechaVenezuelaHoy, fechaVenezuelaDeTimestampSqlite } = require('../utils/fechaVenezuela');
+const { fechaVenezuelaHoy, fechaVenezuelaDeTimestampSqlite, cajaEsDeHoy } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -10,11 +10,25 @@ router.use(requireAuth);
 // (una agencia puede tener una caja general compartida entre vendedores,
 // o cada vendedor puede manejar la suya - aqui la dejamos por agencia,
 // se puede ajustar a "por usuario" facilmente si se prefiere)
+//
+// requiere_cierre: true cuando esa caja quedo abierta de un dia anterior
+// (nadie la cerro antes de medianoche). Antes esto solo se detectaba si
+// alguien intentaba ABRIR una caja nueva -- si la sesion simplemente
+// seguia mostrando la caja de ayer como "abierta" (sin que nadie
+// intentara abrir otra), nunca se avisaba y se seguia vendiendo ahi,
+// mezclando dos dias en el mismo cierre. El frontend usa esta bandera
+// para forzar la pantalla de cierre apenas se detecta, no solo al abrir.
 router.get('/actual', (req, res) => {
   const caja = db.prepare(
     `SELECT * FROM cajas WHERE agencia_id = ? AND estado = 'abierta' ORDER BY id DESC LIMIT 1`
   ).get(req.user.agencia_id);
-  res.json(caja || null);
+  if (!caja) return res.json(null);
+  const esDeHoy = cajaEsDeHoy(caja);
+  res.json({
+    ...caja,
+    requiere_cierre: !esDeHoy,
+    fecha_caja_abierta: esDeHoy ? null : fechaVenezuelaDeTimestampSqlite(caja.abierta_en),
+  });
 });
 
 router.post('/abrir', (req, res) => {

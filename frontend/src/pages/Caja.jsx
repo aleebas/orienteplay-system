@@ -135,6 +135,51 @@ export default function Caja() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mostrarRendicion, rendDesde, rendHasta]);
 
+  /* ── Caja abierta de un día anterior sin declarar ── */
+  // caja.requiere_cierre viene de GET /caja/actual: la caja sigue "abierta"
+  // pero es de ayer (o antes) -- no de una operadora tratando de abrir una
+  // nueva, sino de una sesión que llegó hasta hoy sin que nadie la cerrara
+  // anoche. Se bloquea toda la pantalla hasta declararla: nada de vender ni
+  // pagar premios contra una caja de otro día (el backend también lo
+  // rechaza, esto es para que no llegue ni a intentarlo).
+  if (caja?.requiere_cierre) {
+    return (
+      <div className="caja-cerrada">
+        <div className="caja-cerrada-card">
+          <div className="caja-cerrada-icon">⚠️</div>
+          <h1 style={{ marginBottom: 6 }}>Tienes una caja abierta del {caja.fecha_caja_abierta}</h1>
+          <p className="text-muted text-sm mb-12">
+            Nadie la cerró antes de hoy. Debes declararla antes de poder vender o pagar premios.
+          </p>
+          {resumen && (
+            <div className="alert alert-info">
+              Efectivo esperado: <strong>{fmt(resumen.efectivo_esperado)}</strong>
+              {' '}· Ventas: {fmt(resumen.ventas_total)} · Premios pagados: {fmt(resumen.premios_pagados_total)}
+            </div>
+          )}
+          {error && <div className="alert alert-danger">{error}</div>}
+          <form onSubmit={handleCerrar}>
+            <div className="field">
+              <label>Monto contado en esa caja (Bs.)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={montoFinal}
+                onChange={e => setMontoFinal(e.target.value)}
+                placeholder="0.00"
+                autoFocus
+              />
+            </div>
+            <button type="submit" className="btn btn-danger" style={{ width: '100%' }} disabled={loading}>
+              {loading ? 'Cerrando...' : `Cerrar caja del ${caja.fecha_caja_abierta}`}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   /* ── Caja cerrada ── */
   if (!caja) {
     return (

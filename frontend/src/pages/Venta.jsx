@@ -156,7 +156,10 @@ export default function Venta() {
     // inmediato viendo el caja=null momentáneo, borrando la venta en curso
     // aunque la caja siguiera abierta en el servidor.
     if (cajaCargando) return;
-    if (!caja) { navigate('/caja'); return; }
+    // caja.requiere_cierre: la caja sigue "abierta" pero es de un día
+    // anterior sin declarar -- no se puede vender ahí, hay que ir a /caja
+    // a cerrarla primero (misma razón que !caja).
+    if (!caja || caja.requiere_cierre) { navigate('/caja'); return; }
     getCatalogoLoterias()
       .then(setCatalogo)
       .catch(() => setError('No se pudo cargar el catálogo'))
@@ -918,11 +921,14 @@ export default function Venta() {
                     {!caja && (
                       <div className="alert alert-warning">No hay caja abierta. Abre una caja para pagar premios.</div>
                     )}
+                    {caja?.requiere_cierre && (
+                      <div className="alert alert-warning">Tienes una caja del {caja.fecha_caja_abierta} sin cerrar. Ciérrala en Caja antes de pagar premios.</div>
+                    )}
                     <button
                       className="btn btn-success"
                       style={{ width: '100%', marginBottom: 8 }}
                       onClick={handlePagarTicketModal}
-                      disabled={loadingPagarModal || !caja}
+                      disabled={loadingPagarModal || !caja || caja.requiere_cierre}
                     >
                       {loadingPagarModal ? 'Procesando...' : '💰 Pagar ticket'}
                     </button>

@@ -3,7 +3,7 @@ const db = require('../db/connection');
 const { requireAuth } = require('../middleware/auth');
 const { generarCodigoTicket } = require('../utils/ticket');
 const { sorteoEstaAbierto } = require('../utils/sorteoCierre');
-const { fechaVenezuelaHoy, ahoraVenezuela } = require('../utils/fechaVenezuela');
+const { fechaVenezuelaHoy, ahoraVenezuela, fechaVenezuelaDeTimestampSqlite, cajaEsDeHoy } = require('../utils/fechaVenezuela');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -292,6 +292,19 @@ router.post('/', (req, res) => {
 
   const caja = db.prepare(`SELECT * FROM cajas WHERE id = ? AND estado = 'abierta'`).get(caja_id);
   if (!caja) return res.status(400).json({ error: 'La caja indicada no existe o no esta abierta' });
+
+  // La caja quedo abierta de un dia anterior sin declarar -- no se puede
+  // seguir vendiendo ahi (mezclaria dos dias en un mismo cierre). Mismo
+  // shape de error que POST /caja/abrir para que el frontend reutilice
+  // la misma pantalla de "cierre forzado".
+  if (!cajaEsDeHoy(caja)) {
+    return res.status(409).json({
+      error: `La caja tiene una apertura del ${fechaVenezuelaDeTimestampSqlite(caja.abierta_en)} sin cerrar. Ciérrala antes de registrar más ventas.`,
+      requiere_cierre_anterior: true,
+      caja_id: caja.id,
+      fecha_caja_abierta: fechaVenezuelaDeTimestampSqlite(caja.abierta_en),
+    });
+  }
 
   const fechaDefault = fechaVenezuelaHoy();
   const validaciones = lista.map(j => ({
