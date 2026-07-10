@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCajaActual, abrirCaja, cerrarCaja, getResumenCaja, getRendicion, getRendicionVendedores } from '../api/cliente';
+import { getCajaActual, abrirCaja, cerrarCaja, getResumenCaja, getRendicion, getRendicionVendedores, getHistorialCajas, corregirCaja } from '../api/cliente';
 import { horaVenezuela, fmt, fechaHoyVenezuela } from '../utils/formato';
 
 const TODAY = fechaHoyVenezuela();
@@ -36,6 +36,20 @@ export default function Caja() {
   const [rendVendedores, setRendVendedores] = useState(null);
   const [loadingRend, setLoadingRend] = useState(false);
   const [errorRend, setErrorRend] = useState('');
+
+  // Historial de cajas + correccion manual (solo admin) -- para investigar
+  // y corregir descuadres de turnos pasados.
+  const [mostrarHistorial, setMostrarHistorial] = useState(false);
+  const [histDesde, setHistDesde] = useState(HACE7);
+  const [histHasta, setHistHasta] = useState(TODAY);
+  const [historial, setHistorial] = useState(null);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
+  const [errorHistorial, setErrorHistorial] = useState('');
+  const [editandoId, setEditandoId] = useState(null);
+  const [editMontoInicial, setEditMontoInicial] = useState('');
+  const [editFondoBanco, setEditFondoBanco] = useState('');
+  const [editMontoFinal, setEditMontoFinal] = useState('');
+  const [guardandoEdit, setGuardandoEdit] = useState(false);
 
   const cargarResumen = useCallback(async () => {
     if (!caja?.id) return;
@@ -134,6 +148,49 @@ export default function Caja() {
     if (mostrarRendicion) cargarRendicion();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mostrarRendicion, rendDesde, rendHasta]);
+
+  async function cargarHistorial() {
+    setLoadingHistorial(true);
+    setErrorHistorial('');
+    try {
+      setHistorial(await getHistorialCajas({ desde: histDesde, hasta: histHasta }));
+    } catch (err) {
+      setErrorHistorial(err.message || 'No se pudo cargar el historial de cajas');
+    } finally {
+      setLoadingHistorial(false);
+    }
+  }
+
+  useEffect(() => {
+    if (mostrarHistorial && esAdmin) cargarHistorial();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mostrarHistorial, histDesde, histHasta]);
+
+  function empezarEdicion(c) {
+    setEditandoId(c.id);
+    setEditMontoInicial(String(c.monto_inicial ?? ''));
+    setEditFondoBanco(String(c.fondo_banco ?? ''));
+    setEditMontoFinal(c.monto_final_declarado != null ? String(c.monto_final_declarado) : '');
+  }
+
+  async function guardarEdicion(cajaId) {
+    setGuardandoEdit(true);
+    setErrorHistorial('');
+    try {
+      await corregirCaja(cajaId, {
+        monto_inicial: parseFloat(editMontoInicial) || 0,
+        fondo_banco: parseFloat(editFondoBanco) || 0,
+        monto_final_declarado: editMontoFinal === '' ? null : parseFloat(editMontoFinal),
+      });
+      setEditandoId(null);
+      await cargarHistorial();
+      if (caja?.id === cajaId) cargarResumen();
+    } catch (err) {
+      setErrorHistorial(err.message || 'No se pudo guardar la corrección');
+    } finally {
+      setGuardandoEdit(false);
+    }
+  }
 
   /* ── Caja abierta de un día anterior sin declarar ── */
   // caja.requiere_cierre viene de GET /caja/actual: la caja sigue "abierta"
@@ -341,6 +398,16 @@ export default function Caja() {
                 {fmt(resumen.efectivo_esperado)}
               </span>
             </div>
+            <div className="flex justify-between mt-8">
+              <span className="text-muted text-sm">Banco esperado (Pago Móvil / Biopago)</span>
+              <span className="bold">{fmt(resumen.banco_esperado)}</span>
+            </div>
+            {resumen.ventas_credito > 0 && (
+              <div className="flex justify-between mt-8">
+                <span className="text-muted text-sm">Ventas a crédito (cuentas por cobrar, no cuentan aquí)</span>
+                <span className="bold">{fmt(resumen.ventas_credito)}</span>
+              </div>
+            )}
           </div>
 
           {resumen.comisiones_vendedores?.length > 0 && (
@@ -466,6 +533,104 @@ export default function Caja() {
               </>
             )}
           </div>
+
+          {esAdmin && (
+            <div className="card">
+              <div className="flex justify-between align-center" style={{ cursor: 'pointer' }} onClick={() => setMostrarHistorial(v => !v)}>
+                <h2 style={{ marginBottom: 0 }}>🗂️ Historial de cajas</h2>
+                <span className="btn btn-outline btn-sm btn-inline">{mostrarHistorial ? 'Ocultar' : 'Ver'}</span>
+              </div>
+
+              {mostrarHistorial && (
+                <>
+                  <div className="flex gap-8 mt-12 mb-12" style={{ flexWrap: 'wrap' }}>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <label>Desde</label>
+                      <input type="date" value={histDesde} onChange={e => setHistDesde(e.target.value)} />
+                    </div>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <label>Hasta</label>
+                      <input type="date" value={histHasta} onChange={e => setHistHasta(e.target.value)} />
+                    </div>
+                  </div>
+
+                  {errorHistorial && <div className="alert alert-danger">{errorHistorial}</div>}
+                  {loadingHistorial ? (
+                    <div className="loading"><div className="spinner"></div></div>
+                  ) : historial && (
+                    <div className="tabla-wrap">
+                      <table className="tabla">
+                        <thead>
+                          <tr>
+                            <th>Fecha</th>
+                            <th>Estado</th>
+                            <th style={{ textAlign: 'right' }}>Efectivo esp.</th>
+                            <th style={{ textAlign: 'right' }}>Declarado</th>
+                            <th style={{ textAlign: 'right' }}>Diferencia</th>
+                            <th style={{ textAlign: 'right' }}>Banco esp.</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historial.length === 0 ? (
+                            <tr><td colSpan={7} className="text-center text-muted">Sin cajas en el rango</td></tr>
+                          ) : historial.map(c => (
+                            <tr key={c.id}>
+                              {editandoId === c.id ? (
+                                <td colSpan={7}>
+                                  <div className="flex gap-8" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                                    <div className="field" style={{ marginBottom: 0 }}>
+                                      <label>Monto inicial</label>
+                                      <input type="number" step="0.01" value={editMontoInicial} onChange={e => setEditMontoInicial(e.target.value)} style={{ width: 110 }} />
+                                    </div>
+                                    <div className="field" style={{ marginBottom: 0 }}>
+                                      <label>Fondo banco</label>
+                                      <input type="number" step="0.01" value={editFondoBanco} onChange={e => setEditFondoBanco(e.target.value)} style={{ width: 110 }} />
+                                    </div>
+                                    <div className="field" style={{ marginBottom: 0 }}>
+                                      <label>Declarado (efectivo)</label>
+                                      <input type="number" step="0.01" value={editMontoFinal} onChange={e => setEditMontoFinal(e.target.value)} style={{ width: 110 }} placeholder="sin declarar" />
+                                    </div>
+                                    <button className="btn btn-accent btn-sm" disabled={guardandoEdit} onClick={() => guardarEdicion(c.id)}>
+                                      {guardandoEdit ? 'Guardando...' : 'Guardar'}
+                                    </button>
+                                    <button className="btn btn-outline btn-sm" disabled={guardandoEdit} onClick={() => setEditandoId(null)}>
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </td>
+                              ) : (
+                                <>
+                                  <td>
+                                    {c.fecha_apertura}
+                                    <div className="text-muted text-sm">{c.usuario_apertura_nombre}</div>
+                                  </td>
+                                  <td>
+                                    <span className={`badge badge-${c.estado === 'abierta' ? 'warning' : 'success'}`}>{c.estado}</span>
+                                  </td>
+                                  <td style={{ textAlign: 'right' }}>{fmt(c.efectivo_esperado)}</td>
+                                  <td style={{ textAlign: 'right' }}>{c.monto_final_declarado != null ? fmt(c.monto_final_declarado) : '—'}</td>
+                                  <td style={{ textAlign: 'right', fontWeight: 700, color: c.diferencia == null ? 'inherit' : (c.diferencia >= 0 ? 'var(--success)' : 'var(--danger)') }}>
+                                    {c.diferencia != null ? fmt(c.diferencia) : '—'}
+                                  </td>
+                                  <td style={{ textAlign: 'right' }}>{fmt(c.banco_esperado)}</td>
+                                  <td>
+                                    <button className="btn btn-outline btn-sm btn-inline" onClick={() => empezarEdicion(c)}>
+                                      Corregir
+                                    </button>
+                                  </td>
+                                </>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </>
       ) : (
         <div className="loading">

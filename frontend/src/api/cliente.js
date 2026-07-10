@@ -55,6 +55,17 @@ export const cerrarCaja = (id, monto_final_declarado) =>
 export const getResumenCaja = (id) =>
   req('GET', `/caja/${id}/resumen`);
 
+export const getHistorialCajas = ({ desde, hasta } = {}) => {
+  const params = new URLSearchParams();
+  if (desde) params.set('desde', desde);
+  if (hasta) params.set('hasta', hasta);
+  const qs = params.toString();
+  return req('GET', `/caja${qs ? `?${qs}` : ''}`);
+};
+
+export const corregirCaja = (id, campos) =>
+  req('PUT', `/caja/${id}`, campos);
+
 export const validarJugadas = (jugadas) =>
   req('POST', '/jugadas/validar', { jugadas });
 
