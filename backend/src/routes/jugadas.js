@@ -156,7 +156,15 @@ router.get('/creditos-pendientes', (req, res) => {
   res.json(rows);
 });
 
+const METODOS_COBRO = ['efectivo', 'pago_movil', 'biopago'];
+
+// Cobrar una venta a credito: hay que decir A QUE CAJA entra la plata y POR
+// QUE VIA (efectivo fisico o banco), igual que se hace en una venta nueva --
+// si no, el cobro nunca aparece en el cuadre de ninguna caja.
 router.post('/:id/cobrar', (req, res) => {
+  const { caja_id } = req.body;
+  const metodoCobro = METODOS_COBRO.includes(req.body.metodo_cobro) ? req.body.metodo_cobro : null;
+
   const jugada = db.prepare(`SELECT * FROM jugadas WHERE id = ? AND agencia_id = ?`).get(req.params.id, req.user.agencia_id);
   if (!jugada) return res.status(404).json({ error: 'Jugada no encontrada' });
   if (jugada.metodo_pago !== 'credito') {
@@ -165,8 +173,25 @@ router.post('/:id/cobrar', (req, res) => {
   if (jugada.cobrado) {
     return res.status(409).json({ error: 'Esta venta ya fue marcada como cobrada' });
   }
+  if (!caja_id) return res.status(400).json({ error: 'caja_id es requerido para registrar el cobro' });
+  if (!metodoCobro) return res.status(400).json({ error: 'metodo_cobro debe ser efectivo, pago_movil o biopago' });
 
-  db.prepare(`UPDATE jugadas SET cobrado = 1 WHERE id = ?`).run(jugada.id);
+  const caja = db.prepare(`SELECT * FROM cajas WHERE id = ? AND estado = 'abierta'`).get(caja_id);
+  if (!caja) return res.status(400).json({ error: 'La caja indicada no existe o no esta abierta' });
+
+  // Mismo resguardo que registrar una venta o pagar un premio: no se puede
+  // cobrar contra una caja que quedo abierta de un dia anterior sin cerrar.
+  if (!cajaEsDeHoy(caja)) {
+    return res.status(409).json({
+      error: `La caja tiene una apertura del ${fechaVenezuelaDeTimestampSqlite(caja.abierta_en)} sin cerrar. Ciérrala antes de cobrar créditos.`,
+      requiere_cierre_anterior: true,
+      caja_id: caja.id,
+      fecha_caja_abierta: fechaVenezuelaDeTimestampSqlite(caja.abierta_en),
+    });
+  }
+
+  db.prepare(`UPDATE jugadas SET cobrado = 1, caja_cobro_id = ?, metodo_cobro = ? WHERE id = ?`)
+    .run(caja_id, metodoCobro, jugada.id);
   res.json({ mensaje: 'Venta marcada como cobrada' });
 });
 

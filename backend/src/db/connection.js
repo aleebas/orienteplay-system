@@ -31,6 +31,12 @@ const migraciones = [
   `ALTER TABLE pagos_premio ADD COLUMN cedula_beneficiario TEXT`,
   `ALTER TABLE pagos_premio ADD COLUMN telefono_beneficiario TEXT`,
   `ALTER TABLE pagos_premio ADD COLUMN nombre_beneficiario TEXT`,
+  // A que caja y por que via (efectivo/pago_movil/biopago) entro la plata
+  // cuando se cobra una venta a credito -- antes marcarCreditoCobrado solo
+  // ponia jugadas.cobrado = 1 sin registrar esto, asi que el cobro nunca
+  // aparecia en el cuadre de ninguna caja (ni efectivo ni banco esperado).
+  `ALTER TABLE jugadas ADD COLUMN caja_cobro_id INTEGER REFERENCES cajas(id)`,
+  `ALTER TABLE jugadas ADD COLUMN metodo_cobro TEXT`,
 ];
 for (const sql of migraciones) {
   try {

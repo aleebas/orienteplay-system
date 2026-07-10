@@ -177,8 +177,8 @@ export const getTasaBCV = () =>
 export const getCreditosPendientes = () =>
   req('GET', '/jugadas/creditos-pendientes');
 
-export const marcarCreditoCobrado = (jugadaId) =>
-  req('POST', `/jugadas/${jugadaId}/cobrar`);
+export const marcarCreditoCobrado = (jugadaId, caja_id, metodo_cobro) =>
+  req('POST', `/jugadas/${jugadaId}/cobrar`, { caja_id, metodo_cobro });
 
 export const getRendicion = (desde, hasta) =>
   req('GET', `/reportes/rendicion?desde=${desde}&hasta=${hasta}`);

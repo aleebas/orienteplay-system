@@ -189,6 +189,17 @@ function calcularResumenCaja(cajaId) {
      WHERE pp.caja_id = ? AND j.metodo_pago IN ('pago_movil', 'biopago')`
   ).get(cajaId).total;
 
+  // Ventas a credito que se cobraron y esa plata entro a ESTA caja
+  // (caja_cobro_id, que puede ser distinta -- hasta de otro dia -- a la
+  // caja donde se registro la venta original). Se suman por separado del
+  // efectivo/banco esperado y luego se incorporan abajo.
+  const creditosCobradosEfectivo = db.prepare(
+    `SELECT COALESCE(SUM(monto), 0) AS total FROM jugadas WHERE caja_cobro_id = ? AND metodo_cobro = 'efectivo'`
+  ).get(cajaId).total;
+  const creditosCobradosBanco = db.prepare(
+    `SELECT COALESCE(SUM(monto), 0) AS total FROM jugadas WHERE caja_cobro_id = ? AND metodo_cobro IN ('pago_movil', 'biopago')`
+  ).get(cajaId).total;
+
   // Comision estimada: suma de (venta * % comision de su loteria)
   const comisionRows = db.prepare(
     `SELECT j.monto, COALESCE(c.porcentaje, 15) AS porcentaje
@@ -201,8 +212,8 @@ function calcularResumenCaja(cajaId) {
 
   const comisionTotal = comisionRows.reduce((acc, r) => acc + (r.monto * r.porcentaje / 100), 0);
 
-  const efectivoEsperado = (caja.monto_inicial || 0) + ventasEfectivo - premiosPagadosEfectivo;
-  const bancoEsperado = (caja.fondo_banco || 0) + ventasBanco - premiosPagadosBanco;
+  const efectivoEsperado = (caja.monto_inicial || 0) + ventasEfectivo - premiosPagadosEfectivo + creditosCobradosEfectivo;
+  const bancoEsperado = (caja.fondo_banco || 0) + ventasBanco - premiosPagadosBanco + creditosCobradosBanco;
 
   // Comision de operadora ganada por cada vendedor que vendio en esta caja,
   // segun su comision_porcentaje configurado en usuarios.
@@ -236,6 +247,12 @@ function calcularResumenCaja(cajaId) {
     premios_pagados_cantidad: premiosPagados.cantidad,
     premios_pagados_efectivo: premiosPagadosEfectivo,
     premios_pagados_banco: premiosPagadosBanco,
+    // Creditos de dias/cajas anteriores que se cobraron y entraron a ESTA
+    // caja (ver caja_cobro_id en jugadas). Ya estan incluidos en
+    // efectivo_esperado / banco_esperado, se listan aparte solo para que
+    // el desglose en pantalla sea transparente.
+    creditos_cobrados_efectivo: creditosCobradosEfectivo,
+    creditos_cobrados_banco: creditosCobradosBanco,
     comision_estimada: Math.round(comisionTotal * 100) / 100,
     comisiones_vendedores: comisionesVendedores,
     // efectivo_esperado: SOLO cuenta lo que fisicamente entra/sale de la

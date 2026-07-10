@@ -74,6 +74,11 @@ export default function Tickets() {
   const [loadingCreditos, setLoadingCreditos] = useState(true);
   const [errorCreditos, setErrorCreditos] = useState('');
   const [cobrandoId, setCobrandoId] = useState(null);
+  // Via por la que entra la plata al cobrar cada credito -- por defecto
+  // efectivo, la operadora la cambia si el cliente pago por Pago Movil o
+  // Biopago. Se guarda por jugada_id porque puede haber varios creditos
+  // listados a la vez con vias distintas.
+  const [metodoCobroPorFila, setMetodoCobroPorFila] = useState({});
 
   // Un solo efecto debounced para fecha y busqueda: si hay busqueda, se
   // ignora la fecha y se busca en TODOS los dias por codigo de ticket o
@@ -105,10 +110,13 @@ export default function Tickets() {
   }
 
   async function handleCobrar(c) {
-    if (!confirm(`¿Marcar como pagado el crédito de ${c.cliente_nombre} (${fmt(c.monto)})?`)) return;
+    if (!caja || caja.requiere_cierre) return;
+    const metodo = metodoCobroPorFila[c.jugada_id] || 'efectivo';
+    const metodoLabel = { efectivo: 'Efectivo', pago_movil: 'Pago Móvil', biopago: 'Biopago' }[metodo];
+    if (!confirm(`¿Marcar como pagado el crédito de ${c.cliente_nombre} (${fmt(c.monto)}) por ${metodoLabel}?`)) return;
     setCobrandoId(c.jugada_id);
     try {
-      await marcarCreditoCobrado(c.jugada_id);
+      await marcarCreditoCobrado(c.jugada_id, caja.id, metodo);
       cargarCreditos();
     } catch (err) {
       setErrorCreditos(err.message || 'No se pudo marcar como pagado');
@@ -276,6 +284,13 @@ export default function Tickets() {
       {vista === 'creditos' && (
         <div className="card">
           {errorCreditos && <div className="alert alert-danger">{errorCreditos}</div>}
+          {(!caja || caja.requiere_cierre) && (
+            <div className="alert alert-warning">
+              {!caja
+                ? 'No hay caja abierta. Abre una caja para poder cobrar créditos.'
+                : `Tienes una caja del ${caja.fecha_caja_abierta} sin cerrar. Ciérrala en Caja antes de cobrar créditos.`}
+            </div>
+          )}
           {loadingCreditos ? (
             <div className="loading"><div className="spinner"></div></div>
           ) : creditos.length === 0 ? (
@@ -291,6 +306,7 @@ export default function Tickets() {
                     <th>Lotería</th>
                     <th>Animalito(s)</th>
                     <th>Monto</th>
+                    <th>Vía de cobro</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -304,9 +320,22 @@ export default function Tickets() {
                       <td>{c.animalitos}</td>
                       <td className="bold text-primary">{fmt(c.monto)}</td>
                       <td>
+                        <select
+                          className="field"
+                          style={{ padding: '6px 8px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)' }}
+                          value={metodoCobroPorFila[c.jugada_id] || 'efectivo'}
+                          onChange={e => setMetodoCobroPorFila(prev => ({ ...prev, [c.jugada_id]: e.target.value }))}
+                          disabled={!caja || caja.requiere_cierre}
+                        >
+                          <option value="efectivo">Efectivo</option>
+                          <option value="pago_movil">Pago Móvil</option>
+                          <option value="biopago">Biopago</option>
+                        </select>
+                      </td>
+                      <td>
                         <button
                           className="btn btn-success btn-sm btn-inline"
-                          disabled={cobrandoId === c.jugada_id}
+                          disabled={cobrandoId === c.jugada_id || !caja || caja.requiere_cierre}
                           onClick={() => handleCobrar(c)}
                         >
                           {cobrandoId === c.jugada_id ? '...' : 'Marcar como pagado'}

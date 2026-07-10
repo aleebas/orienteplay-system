@@ -408,6 +408,16 @@ export default function Caja() {
                 <span className="bold">{fmt(resumen.ventas_credito)}</span>
               </div>
             )}
+            {(resumen.creditos_cobrados_efectivo > 0 || resumen.creditos_cobrados_banco > 0) && (
+              <div className="flex justify-between mt-8">
+                <span className="text-muted text-sm">Créditos cobrados en esta caja (ya incluidos arriba)</span>
+                <span className="bold">
+                  {resumen.creditos_cobrados_efectivo > 0 && `Efvo. ${fmt(resumen.creditos_cobrados_efectivo)}`}
+                  {resumen.creditos_cobrados_efectivo > 0 && resumen.creditos_cobrados_banco > 0 ? ' · ' : ''}
+                  {resumen.creditos_cobrados_banco > 0 && `Banco ${fmt(resumen.creditos_cobrados_banco)}`}
+                </span>
+              </div>
+            )}
           </div>
 
           {resumen.comisiones_vendedores?.length > 0 && (
