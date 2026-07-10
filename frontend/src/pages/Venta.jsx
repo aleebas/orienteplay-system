@@ -148,6 +148,10 @@ export default function Venta() {
   const [loadingBuscarTicket, setLoadingBuscarTicket] = useState(false);
   const [errorBuscarTicket, setErrorBuscarTicket] = useState('');
   const [loadingPagarModal, setLoadingPagarModal] = useState(false);
+  // Cuando el codigo escrito es de VENTA (V-XXXXXXXX, el que se ve grande
+  // en el comprobante impreso) y esa venta tiene mas de una jugada/ticket,
+  // no hay un unico ticket que mostrar -- se lista para que elija cual.
+  const [ventaMultiple, setVentaMultiple] = useState(null);
 
   // ── Carga catálogo ────────────────────────────────────────
   useEffect(() => {
@@ -670,7 +674,7 @@ export default function Venta() {
 
   // ── Modal "Buscar tickets" ─────────────────────────────────
   function abrirModalBuscarTicket() {
-    setCodigoBuscar(''); setTicketBuscado(null); setErrorBuscarTicket('');
+    setCodigoBuscar(''); setTicketBuscado(null); setErrorBuscarTicket(''); setVentaMultiple(null);
     setModalBuscarTicket(true);
   }
 
@@ -678,16 +682,57 @@ export default function Venta() {
     setModalBuscarTicket(false);
   }
 
+  // El comprobante impreso muestra el codigo de VENTA (V-XXXXXXXX) en
+  // grande, no el de cada ticket individual (MS-XXXXXXXX) -- por eso la
+  // operadora normalmente escribe/escanea el codigo de venta acá. Antes
+  // esto solo probaba match exacto contra tickets.codigo (MS-), así que
+  // buscar por V- siempre daba "Ticket no encontrado" aunque el mismo
+  // código funcionara perfecto en Tickets (que sí busca en ambos). Ahora,
+  // si no es un ticket individual, se prueba como código de venta: si esa
+  // venta tiene un solo ticket se muestra directo (mismo comportamiento
+  // de siempre); si tiene varios, se listan para elegir cuál.
   async function handleBuscarTicketModal() {
     const cod = codigoBuscar.trim().toUpperCase();
     if (!cod) return;
     setErrorBuscarTicket('');
+    setVentaMultiple(null);
     setLoadingBuscarTicket(true);
     try {
       setTicketBuscado(await getTicket(cod));
     } catch (err) {
-      setTicketBuscado(null);
-      setErrorBuscarTicket(err.status === 404 ? 'Ticket no encontrado' : err.message);
+      if (err.status === 404) {
+        try {
+          const { venta, jugadas } = await getVenta(cod);
+          if (jugadas.length === 1) {
+            setTicketBuscado(await getTicket(jugadas[0].ticket_codigo));
+          } else if (jugadas.length > 1) {
+            setTicketBuscado(null);
+            setVentaMultiple({ venta, jugadas });
+          } else {
+            setTicketBuscado(null);
+            setErrorBuscarTicket('Ticket no encontrado');
+          }
+        } catch {
+          setTicketBuscado(null);
+          setErrorBuscarTicket('Ticket no encontrado');
+        }
+      } else {
+        setTicketBuscado(null);
+        setErrorBuscarTicket(err.message);
+      }
+    } finally {
+      setLoadingBuscarTicket(false);
+    }
+  }
+
+  async function seleccionarTicketDeVenta(ticketCodigo) {
+    setLoadingBuscarTicket(true);
+    setErrorBuscarTicket('');
+    try {
+      setTicketBuscado(await getTicket(ticketCodigo));
+      setVentaMultiple(null);
+    } catch (err) {
+      setErrorBuscarTicket(err.message || 'No se pudo cargar el ticket');
     } finally {
       setLoadingBuscarTicket(false);
     }
@@ -856,7 +901,7 @@ export default function Venta() {
                 type="text"
                 value={codigoBuscar}
                 onChange={e => setCodigoBuscar(e.target.value.toUpperCase())}
-                placeholder="Ej: MS-ABC1XY23"
+                placeholder="Ej: V-06250578 o MS-ABC1XY23"
                 style={{ flex: 1, padding: '11px 14px', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '1rem', minHeight: 48 }}
                 onKeyDown={e => e.key === 'Enter' && handleBuscarTicketModal()}
                 autoFocus
@@ -872,6 +917,33 @@ export default function Venta() {
             </div>
 
             {errorBuscarTicket && <div className="alert alert-danger">{errorBuscarTicket}</div>}
+
+            {ventaMultiple && (
+              <div style={{ marginBottom: 12 }}>
+                <div className="text-muted text-sm mb-8">
+                  La venta <strong>{ventaMultiple.venta.codigo}</strong> tiene {ventaMultiple.jugadas.length} jugadas -- elige cuál:
+                </div>
+                {ventaMultiple.jugadas.map(j => (
+                  <button
+                    key={j.ticket_codigo}
+                    className="btn btn-outline btn-sm"
+                    style={{ width: '100%', marginBottom: 6, textAlign: 'left', display: 'flex', justifyContent: 'space-between' }}
+                    onClick={() => seleccionarTicketDeVenta(j.ticket_codigo)}
+                    disabled={loadingBuscarTicket}
+                  >
+                    <span>{j.loteria_nombre} · {hora12(j.sorteo_hora)} · {fmt(j.monto)}</span>
+                    <span className={`badge badge-${
+                      j.ticket_estado === 'ganador' ? 'success' :
+                      j.ticket_estado === 'pagado' ? 'muted' :
+                      j.ticket_estado === 'perdedor' ? 'danger' :
+                      j.ticket_estado === 'anulado' ? 'warning' : 'info'
+                    }`}>
+                      {j.ticket_estado.toUpperCase()}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {ticketBuscado && (
               <>

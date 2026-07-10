@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getGanadoresPendientes, getTicket, pagarPremio, getConfiguracion } from '../api/cliente';
+import { getGanadoresPendientes, getTicket, getVenta, pagarPremio, getConfiguracion } from '../api/cliente';
 import { EMOJI_MAP } from '../components/SelectorAnimalito';
 import ModalPagoDigital from '../components/ModalPagoDigital';
 import { hora12, fmt, horaVenezuela, fechaHoyVenezuela, abrirWhatsAppPagoDigital } from '../utils/formato';
@@ -20,6 +20,11 @@ export default function Pagos() {
   const [exito, setExito] = useState('');
   const [config, setConfig] = useState({});
   const [showModalDigital, setShowModalDigital] = useState(false);
+  // Igual que en Venta.jsx: el comprobante impreso muestra el codigo de
+  // VENTA (V-XXXXXXXX) en grande, no el de cada ticket (MS-XXXXXXXX).
+  // Si el codigo buscado no es un ticket individual, se prueba como venta;
+  // si esa venta tiene mas de un ticket, se listan para elegir cual.
+  const [ventaMultiple, setVentaMultiple] = useState(null);
 
   useEffect(() => {
     getGanadoresPendientes(TODAY)
@@ -34,13 +39,45 @@ export default function Pagos() {
     if (!c) return;
     setError('');
     setExito('');
+    setVentaMultiple(null);
     setLoadingBuscar(true);
     try {
       const data = await getTicket(c);
       setTicketDetalle(data);
     } catch (err) {
-      setTicketDetalle(null);
-      setError(err.status === 404 ? 'Ticket no encontrado' : err.message);
+      if (err.status === 404) {
+        try {
+          const { venta, jugadas } = await getVenta(c);
+          if (jugadas.length === 1) {
+            setTicketDetalle(await getTicket(jugadas[0].ticket_codigo));
+          } else if (jugadas.length > 1) {
+            setTicketDetalle(null);
+            setVentaMultiple({ venta, jugadas });
+          } else {
+            setTicketDetalle(null);
+            setError('Ticket no encontrado');
+          }
+        } catch {
+          setTicketDetalle(null);
+          setError('Ticket no encontrado');
+        }
+      } else {
+        setTicketDetalle(null);
+        setError(err.message);
+      }
+    } finally {
+      setLoadingBuscar(false);
+    }
+  }
+
+  async function seleccionarTicketDeVenta(ticketCodigo) {
+    setLoadingBuscar(true);
+    setError('');
+    try {
+      setTicketDetalle(await getTicket(ticketCodigo));
+      setVentaMultiple(null);
+    } catch (err) {
+      setError(err.message || 'No se pudo cargar el ticket');
     } finally {
       setLoadingBuscar(false);
     }
@@ -116,6 +153,7 @@ export default function Pagos() {
     setExito('');
     setCodigo('');
     setShowModalDigital(false);
+    setVentaMultiple(null);
   }
 
   const montoPremio = ticketDetalle
@@ -140,7 +178,7 @@ export default function Pagos() {
               type="text"
               value={codigo}
               onChange={e => setCodigo(e.target.value.toUpperCase())}
-              placeholder="Ej: MS-ABC1XY23"
+              placeholder="Ej: V-06250578 o MS-ABC1XY23"
               onKeyDown={e => e.key === 'Enter' && buscarTicket()}
             />
           </div>
@@ -154,6 +192,33 @@ export default function Pagos() {
           </button>
         </div>
       </div>
+
+      {/* Venta con varias jugadas -- elegir cuál ticket ver */}
+      {ventaMultiple && (
+        <div className="card">
+          <div className="text-muted text-sm mb-8">
+            La venta <strong>{ventaMultiple.venta.codigo}</strong> tiene {ventaMultiple.jugadas.length} jugadas -- elige cuál:
+          </div>
+          {ventaMultiple.jugadas.map(j => (
+            <button
+              key={j.ticket_codigo}
+              className="btn btn-outline btn-sm"
+              style={{ width: '100%', marginBottom: 6, textAlign: 'left', display: 'flex', justifyContent: 'space-between' }}
+              onClick={() => seleccionarTicketDeVenta(j.ticket_codigo)}
+              disabled={loadingBuscar}
+            >
+              <span>{j.loteria_nombre} · {hora12(j.sorteo_hora)} · {fmt(j.monto)}</span>
+              <span className={`badge badge-${
+                j.ticket_estado === 'ganador' ? 'success' :
+                j.ticket_estado === 'pagado' ? 'muted' :
+                j.ticket_estado === 'perdedor' ? 'danger' : 'info'
+              }`}>
+                {j.ticket_estado.toUpperCase()}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Detalle del ticket */}
       {ticketDetalle && (
