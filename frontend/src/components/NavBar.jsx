@@ -2,7 +2,15 @@ import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getResumenCaja, getTasaBCV } from '../api/cliente';
-import { fmt } from '../utils/formato';
+import { fmt, ahoraVenezuela } from '../utils/formato';
+
+// Hora (Venezuela) a partir de la cual se avisa que hay que cerrar la caja
+// antes de medianoche. No hay forma barata de mandar un WhatsApp automatico
+// (eso requeriria contratar la API de WhatsApp Business), asi que esto es
+// un recordatorio dentro del propio panel -- se suma al bloqueo real que ya
+// existe (caja.requiere_cierre) para cuando alguien de verdad se le pasa la
+// hora y sigue abierta al dia siguiente.
+const HORA_AVISO_CIERRE = 23;
 
 export default function NavBar() {
   const { auth, caja, logout } = useAuth();
@@ -10,6 +18,16 @@ export default function NavBar() {
   const [open, setOpen] = useState(false);
   const [totalHoy, setTotalHoy] = useState(null);
   const [tasaBCV, setTasaBCV] = useState(null);
+  const [avisoCierre, setAvisoCierre] = useState(false);
+
+  useEffect(() => {
+    function chequear() {
+      setAvisoCierre(ahoraVenezuela().getUTCHours() >= HORA_AVISO_CIERRE);
+    }
+    chequear();
+    const t = setInterval(chequear, 60000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!caja?.id) { setTotalHoy(null); return; }
@@ -43,7 +61,17 @@ export default function NavBar() {
   ];
 
   return (
-    <nav className="navbar">
+    <>
+      {avisoCierre && caja && !caja.requiere_cierre && (
+        <div
+          className="alert alert-warning"
+          style={{ margin: 0, borderRadius: 0, textAlign: 'center', cursor: 'pointer', fontWeight: 600 }}
+          onClick={() => navigate('/caja')}
+        >
+          ⏰ Ya casi es medianoche -- cierra la caja de hoy antes de las 12 para no dejarla abierta de un día para otro. Toca aquí para ir a Caja.
+        </div>
+      )}
+      <nav className="navbar">
       <div className="navbar-brand">
         <img
           src="/ORIENTEPLAY_LOGO.png"
@@ -85,6 +113,7 @@ export default function NavBar() {
       >
         {open ? '✕' : '☰'}
       </button>
-    </nav>
+      </nav>
+    </>
   );
 }

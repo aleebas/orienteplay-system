@@ -42,6 +42,10 @@ export default function Caja() {
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
   const [histDesde, setHistDesde] = useState(HACE7);
   const [histHasta, setHistHasta] = useState(TODAY);
+  // Filtro por vendedor -- hoy con 1 sola operadora no filtra casi nada,
+  // pero queda listo para cuando haya varios cajeros abriendo caja en la
+  // misma agencia (ej. al arrancar la 2da operadora por telefono).
+  const [histVendedor, setHistVendedor] = useState('');
   const [historial, setHistorial] = useState(null);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [errorHistorial, setErrorHistorial] = useState('');
@@ -562,6 +566,15 @@ export default function Caja() {
                       <label>Hasta</label>
                       <input type="date" value={histHasta} onChange={e => setHistHasta(e.target.value)} />
                     </div>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <label>Vendedor</label>
+                      <select value={histVendedor} onChange={e => setHistVendedor(e.target.value)}>
+                        <option value="">Todos</option>
+                        {[...new Set((historial || []).map(c => c.usuario_apertura_nombre))].map(nombre => (
+                          <option key={nombre} value={nombre}>{nombre}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {errorHistorial && <div className="alert alert-danger">{errorHistorial}</div>}
@@ -582,9 +595,14 @@ export default function Caja() {
                           </tr>
                         </thead>
                         <tbody>
-                          {historial.length === 0 ? (
-                            <tr><td colSpan={7} className="text-center text-muted">Sin cajas en el rango</td></tr>
-                          ) : historial.map(c => (
+                          {(() => {
+                            const filtradas = histVendedor
+                              ? historial.filter(c => c.usuario_apertura_nombre === histVendedor)
+                              : historial;
+                            if (filtradas.length === 0) {
+                              return <tr><td colSpan={7} className="text-center text-muted">Sin cajas en el rango</td></tr>;
+                            }
+                            return filtradas.map(c => (
                             <tr key={c.id}>
                               {editandoId === c.id ? (
                                 <td colSpan={7}>
@@ -632,7 +650,8 @@ export default function Caja() {
                                 </>
                               )}
                             </tr>
-                          ))}
+                            ));
+                          })()}
                         </tbody>
                       </table>
                     </div>
